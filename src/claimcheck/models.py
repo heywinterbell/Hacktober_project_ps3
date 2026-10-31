@@ -5,8 +5,19 @@ Verdicts come from real parsing and sandboxed execution, never from an LLM.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    # Backport of Python 3.11's enum.StrEnum for Python 3.10 compatibility.
+    # Mirrors the stdlib implementation so str()/format()/repr() behave
+    # identically on every supported interpreter.
+    class StrEnum(str, Enum):
+        __str__ = str.__str__
+        __format__ = str.__format__
 
 
 class ReportType(StrEnum):
