@@ -18,6 +18,10 @@ ClaimCheck classifies the report, extracts the claim (symbols, versions, repro s
 
 ## Install
 
+Requires Python 3.10 or newer (3.11+ recommended). Docker gives strong sandbox
+isolation; Ollama enables the optional open-source LLM extraction. Neither is
+required to install or run the test suite.
+
 ```bash
 pip install -e ".[dev]"
 ```
@@ -29,6 +33,7 @@ claimcheck doctor                                  # check Docker / Ollama avail
 claimcheck triage --repo PATH --report FILE        # triage a bug or security report
 claimcheck pr --repo PATH --base main --head BR    # analyse a pull request
 claimcheck serve --port 8000                       # run the GitHub webhook server
+python main.py                                     # terminal-styled GUI (Tkinter)
 ```
 
 Add `--no-llm` to force rule-based extraction. Add `--json` for machine-readable output.
