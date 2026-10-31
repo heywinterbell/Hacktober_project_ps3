@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Triage that tests the claims: verify bug reports, security reports, and PRs with deterministic checks and sandboxed execution."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{ name = "Heywinterbell" }]
 keywords = ["triage", "github", "security", "sandbox", "hacktoberfest"]
 dependencies = [
@@ -34,13 +34,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["fixtures", ".*", "build", "dist"]
+pythonpath = ["src"]
 markers = [
     "docker: tests that require a working Docker daemon (skipped when absent)",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
