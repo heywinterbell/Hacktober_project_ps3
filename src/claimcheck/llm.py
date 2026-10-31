@@ -12,10 +12,13 @@ and the final ``overall_verdict`` must be the same.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
 from typing import Any
+
+from .models import ReportType
 
 # ---------------------------------------------------------------------------
 # Environment control
@@ -23,6 +26,13 @@ from typing import Any
 
 _CLAIMCHECK_LLM = os.environ.get("CLAIMCHECK_LLM", "")
 _OllamaBase = "http://localhost:11434/api/tags"
+
+#: Maps the claim_type strings used by the LLM prompts to the core model.
+_CLAIM_TYPE_TO_REPORT: dict[str, ReportType] = {
+    "bug_report": ReportType.BUG,
+    "security_report": ReportType.SECURITY,
+    "pr_report": ReportType.PULL_REQUEST,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -120,10 +130,14 @@ def extract_without_llm(
     dict in the same shape as ``extract_with_llm`` when possible, otherwise
     ``None``.
     """
-    # Very minimal rule-based extraction – the real implementation lives in
-    # ``extract.py``; this wrapper just delegates there.
-    from claimcheck.extract import extract_claim  # type: ignore
-    return extract_claim(claim_type, raw_text)
+    # Delegate to the rule-based extraction in extract.py, in the right
+    # argument order (text first, then the classified report type), and
+    # return a JSON-serialisable dict (not a Claim dataclass).
+    from claimcheck.extract import extract_claim
+
+    report_type = _CLAIM_TYPE_TO_REPORT.get(claim_type, ReportType.BUG)
+    claim = extract_claim(raw_text, report_type)
+    return dataclasses.asdict(claim)
 
 
 # ---------------------------------------------------------------------------
