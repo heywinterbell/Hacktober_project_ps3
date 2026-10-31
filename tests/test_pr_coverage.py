@@ -27,8 +27,8 @@ def _tmp_project(*extra_files: tuple[str, str]) -> str:
     # default tiny project
     default = {
         "calc.py": "def add(a, b):\n    return a + b\n",
-        "tests/test_calc.py": "from claimcheck.tests.fixtures.sample_project import _dummy\n"
-        "\ndef test_add():\n    assert add(1, 2) == 3\n",
+        "tests/test_calc.py": "\ndef test_add():\n    assert add(1, 2) == 3\n",
++ "\nfrom calc import add\n",
     }
     for name, content in {**default, **dict(extra_files)}.items():
         path = os.path.join(tmp, name)
@@ -212,7 +212,7 @@ def add(a, b):
 """
     claim = type("Claim", (), {"claims_tests": True})()
     ev = check_pr_coverage(tmp, diff_text, claim=claim)
-    claims_items = [x for x in ev if x.check == "claims_tests"]
+    claims_items = [x for x in ev if x["check"] == "claims_tests"]
     assert any("claim says adds tests" in x["summary"] for x in claims_items)
 
 
@@ -231,7 +231,7 @@ def add(a, b):
     claim = type("Claim", (), {"claims_tests": True})()
     ev = check_pr_coverage(tmp, diff_text, claim=claim)
     # Should NOT have a claims_tests evidence item (or it may be absent)
-    claims_items = [x for x in ev if x.check == "claims_tests"]
+    claims_items = [x for x in ev if x["check"] == "claims_tests"]
     # either empty or not raising; we just check no crash
     assert isinstance(claims_items, list)
 
