@@ -17,5 +17,10 @@ Project: ClaimCheck (Team Heywinterbell). Read `docs/ARCHITECTURE.md` and `docs/
 - Add or update tests with every change. Keep coverage ≥ 80% on `src/`.
 - Prefer stdlib. Add a dependency only with a clear reason, and pin a range in `pyproject.toml`.
 
+## Git
+- Small, single-purpose commits: `type(scope): what changed and why`.
+- One concern per commit — feature code plus its tests together; docs and chores in their own commits. Never bundle unrelated files.
+- The PR description lists the commits it contains.
+
 ## Before saying "done"
 Run `pytest` and `ruff check .`, then report the results honestly.
