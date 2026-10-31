@@ -161,5 +161,61 @@ def pr(
     typer.echo(markdown)
 
 
+@app.command()
+def hunt(
+    claim: str = typer.Argument(..., help="The security claim text to test"),
+) -> None:
+    """Run the five AI hunter agents against a security claim.
+
+    Each hunter tests a different vulnerability class (SQL injection,
+    command injection, path traversal, XSS, RCE) by generating a test
+    payload with Ollama and executing it in a sandbox.  The verdict
+    always comes from the deterministic sandbox execution, never from
+    the LLM.
+
+    Usage::
+
+        claimcheck hunt "The function parse_url_v2() has a SQL injection
+        vulnerability in user input."
+
+    The output is a Markdown report summarising each hunter's finding
+    and an overall verdict.
+    """
+    from claimcheck.hunters import hunt as _hunt
+    from claimcheck.models import Verdict as ModelVerdict
+    from claimcheck.report import EvidenceItem, Report
+
+    models_report: Report = _hunt(claim)
+    # Convert models.Evidence -> report.py EvidenceItem
+    evidence_items: list[EvidenceItem] = []
+    for ev in models_report.evidence:
+        verdict_str = (
+            ev.verdict.value
+            if isinstance(ev.verdict, ModelVerdict)
+            else str(ev.verdict)
+        )
+        # models.Evidence has sandboxed: bool; report.py EvidenceItem has isolation: str | None
+        isolation_str = "strong" if ev.sandboxed else ("weak" if ev.sandboxed is False else None)
+        evidence_items.append(
+            EvidenceItem(
+                check=ev.check,
+                verdict=verdict_str,
+                summary=ev.summary,
+                details=ev.summary,
+                isolation=isolation_str,
+            )
+        )
+
+    report = Report(
+        claim_type="security_hunt",
+        evidence=evidence_items,
+        sandboxed=models_report.evidence[0].sandboxed
+        if models_report.evidence
+        else True,
+    )
+    markdown = report.to_markdown()
+    typer.echo(markdown)
+
+
 if __name__ == "__main__":
     app()
