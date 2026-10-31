@@ -27,16 +27,17 @@ pip install -e ".[dev]"
 ```
 
 ## Usage
-
-```bash
-claimcheck doctor                                  # check Docker / Ollama availability
-claimcheck triage --repo PATH --report FILE        # triage a bug or security report
-claimcheck pr --repo PATH --base main --head BR    # analyse a pull request
-claimcheck serve --port 8000                       # run the GitHub webhook server
-python main.py                                     # terminal-styled GUI (Tkinter)
-```
-
-Add `--no-llm` to force rule-based extraction. Add `--json` for machine-readable output.
+ 
+ ```bash
+ claimcheck doctor                                  # check Docker / Ollama availability
+ claimcheck triage --repo PATH --report FILE        # triage a bug or security report
+ claimcheck pr --repo PATH --base main --head BR    # analyse a pull request
+ claimcheck serve --port 8000                       # run the GitHub webhook server
+ python main.py                                     # terminal-styled GUI (Tkinter)
+ claimcheck hunt "The function parse_url_v2() has a SQL injection vulnerability in user input."  # run 5 AI security hunters
+ ```
+ 
+ Add `--no-llm` to force rule-based extraction. Add `--json` for machine-readable output.
 
 ## Safety
 
