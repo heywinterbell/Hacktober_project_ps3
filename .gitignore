@@ -1,0 +1,51 @@
+# Secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Local planning workspace (staging only — not part of the public repo)
+Plan/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+coverage/
+.hypothesis/
+
+# Tool output
+graphify-out/
+*.log
+
+# Local tool config
+.opencode/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
