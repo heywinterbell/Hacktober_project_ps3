@@ -1,247 +1,346 @@
 """Tests for ``src/claimcheck/checks/pr_coverage.py``.
 
-Uses canned diffs and canned coverage JSON (CI‑safe, no Docker needed).
+CI-safe: the sandbox is faked with canned pytest output and canned coverage
+JSON, so no Docker, no pytest-in-pytest. One ``docker``-marked test runs the
+real thing and is skipped when Docker or the image is missing.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import re
 import subprocess
-import tempfile
+from types import SimpleNamespace
 
-from claimcheck.checks.pr_coverage import check_pr_coverage, intersect_uncovered
+import pytest
+
+from claimcheck.checks import pr_coverage
+from claimcheck.checks.pr_coverage import (
+    _is_test_path,
+    _production_added_lines,
+    _split_output,
+    build_coverage_command,
+    check_pr_coverage,
+    intersect_uncovered,
+)
+from claimcheck.sandbox import STRONG, WEAK, SandboxResult, docker_available
+
+_ADD_SUB_DIFF = "\n".join(
+    [
+        "diff --git a/calc.py b/calc.py",
+        "--- a/calc.py",
+        "+++ b/calc.py",
+        "@@ -1,2 +1,4 @@",
+        " def add(a, b):",
+        "     return a + b",
+        "+def sub(a, b):",
+        "+    return a - b",
+    ]
+)
+
+_TEST_ONLY_DIFF = "\n".join(
+    [
+        "diff --git a/tests/test_calc.py b/tests/test_calc.py",
+        "--- a/tests/test_calc.py",
+        "+++ b/tests/test_calc.py",
+        "@@ -1,1 +1,2 @@",
+        " import calc",
+        "+def test_new(): pass",
+    ]
+)
 
 
-# ---------------------------------------------------------------
-# Helper: write a small Python project on disc and return its path
-# ---------------------------------------------------------------
-def _tmp_project(*extra_files: tuple[str, str]) -> str:
-    """Create a temporary directory with a tiny Python project.
-
-    *extra_files* are ``(filename, content)`` tuples added beyond the defaults.
-    Returns the temp directory path.
-    """
-    tmp = tempfile.mkdtemp(prefix="prcov-")
-    # default tiny project
-    default = {
-        "calc.py": "def add(a, b):\n    return a + b\n",
-        "tests/test_calc.py": (
-            "from calc import add\n"
-            "\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
-        ),
-    }
-    for name, content in {**default, **dict(extra_files)}.items():
-        path = os.path.join(tmp, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-    return tmp
+def _cov(executed, missing, path="calc.py"):
+    return {"files": {path: {"executed_lines": executed, "missing_lines": missing}}}
 
 
-# ---------------------------------------------------------------
-# 1️⃣ intersect_uncovered unit tests
-# ---------------------------------------------------------------
+def _fake_sandbox(monkeypatch, *, coverage=None, exit_code=0, isolation=STRONG,
+                  timed_out=False, pytest_text="1 passed"):
+    """Replace ``run_in_sandbox`` in pr_coverage; return the recorded calls."""
+    calls: list[dict] = []
+
+    def fake(repo, argv, **kwargs):
+        calls.append({"repo": repo, "argv": argv, **kwargs})
+        marker = re.search(r"@@CLAIMCHECK-COVERAGE-\w+@@", argv[2]).group(0)
+        blob = json.dumps(coverage) if coverage is not None else ""
+        return SandboxResult(
+            stdout=f"{pytest_text}\n{marker}\n{blob}",
+            stderr="",
+            exit_code=exit_code,
+            timed_out=timed_out,
+            duration=0.1,
+            isolation=isolation,
+            command=argv,
+        )
+
+    monkeypatch.setattr(pr_coverage, "run_in_sandbox", fake)
+    return calls
+
+
+def _no_sandbox(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("sandbox must not run")
+
+    monkeypatch.setattr(pr_coverage, "run_in_sandbox", boom)
+
+
+# --- intersect_uncovered ------------------------------------------------------
+
+
 def test_intersect_uncovered_no_uncovered():
-    diff = {"calc.py": {1, 2}}
-    coverage = {
-        "files": {
-            "calc.py": {"executed_lines": [1, 2], "summary": {"covered": 2, "missing": 0}},
-        }
-    }
-    got = intersect_uncovered(diff, coverage)
-    assert got == {}
+    cov = {"files": {"calc.py": {"executed_lines": [1, 2]}}}
+    assert intersect_uncovered({"calc.py": {1, 2}}, cov) == {}
 
 
 def test_intersect_uncovered_with_uncovered():
-    diff = {"calc.py": {1, 2, 3}}
-    coverage = {
-        "files": {
-            "calc.py": {"executed_lines": [1, 2], "summary": {"covered": 2, "missing": 1}},
-        }
-    }
-    got = intersect_uncovered(diff, coverage)
-    assert got == {"calc.py": {3}}
+    cov = {"files": {"calc.py": {"executed_lines": [1, 2]}}}
+    assert intersect_uncovered({"calc.py": {1, 2, 3}}, cov) == {"calc.py": {3}}
 
 
 def test_intersect_uncovered_multiple_files():
-    diff = {"calc.py": {1}, "utils.py": {5}}
-    coverage = {
-        "files": {
-            "calc.py": {"executed_lines": [1], "summary": {}},
-            "utils.py": {"executed_lines": [], "summary": {}},
-        }
-    }
-    got = intersect_uncovered(diff, coverage)
-    # calc.py is fully covered -> omitted (empty set is falsy; callers gate on it)
-    assert got == {"utils.py": {5}}
+    cov = {"files": {"calc.py": {"executed_lines": [1]}, "utils.py": {"executed_lines": []}}}
+    assert intersect_uncovered({"calc.py": {1}, "utils.py": {5}}, cov) == {"utils.py": {5}}
 
 
-# ---------------------------------------------------------------
-# 2️⃣ canned diffs (parsed via parse_unified_diff)
-# ---------------------------------------------------------------
-def _canned_diff_simple() -> str:
-    """Raw unified-diff text (check_pr_coverage parses it internally)."""
-    return "\n".join(
+def test_intersect_ignores_non_executable_added_lines():
+    # line 3 is a comment/docstring: neither executed nor missing
+    cov = _cov(executed=[1, 2], missing=[4])
+    assert intersect_uncovered({"calc.py": {3, 4}}, cov) == {"calc.py": {4}}
+
+
+def test_intersect_matches_workspace_and_dot_prefixes():
+    cov = _cov(executed=[], missing=[2], path="/workspace/calc.py")
+    assert intersect_uncovered({"./calc.py": {2}}, cov) == {"./calc.py": {2}}
+    assert intersect_uncovered({"calc.py": {2}}, _cov([2], [], "./calc.py")) == {}
+
+
+def test_file_absent_from_coverage_is_fully_uncovered():
+    assert intersect_uncovered({"new.py": {1, 2}}, {"files": {}}) == {"new.py": {1, 2}}
+
+
+# --- path filters -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path", ["tests/test_calc.py", "pkg/test/x.py", "test_calc.py", "calc_test.py", "conftest.py"]
+)
+def test_is_test_path_true(path):
+    assert _is_test_path(path)
+
+
+@pytest.mark.parametrize("path", ["calc.py", "latest.py", "contest.py", "src/pkg/utils.py"])
+def test_is_test_path_false(path):
+    assert not _is_test_path(path)
+
+
+def test_production_lines_skip_tests_and_non_python():
+    diff = {"calc.py": {1}, "README.md": {1}, "tests/test_calc.py": {1}, "gone.py": set()}
+    assert _production_added_lines(diff) == [("calc.py", {1})]
+
+
+# --- the suite runs through the sandbox, never on the host --------------------
+
+
+def test_module_does_not_use_subprocess_directly():
+    assert not hasattr(pr_coverage, "subprocess")
+
+
+def test_runs_through_sandbox_with_tmp_paths_only(monkeypatch, tmp_path):
+    calls = _fake_sandbox(monkeypatch, coverage=_cov([1, 2, 3, 4], []))
+    check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert len(calls) == 1
+    call = calls[0]
+    script = call["argv"][2]
+    assert call["argv"][:2] == ["sh", "-c"]
+    for needle in (
+        "COVERAGE_FILE=/tmp/",
+        "python -B -m pytest",
+        "-p no:cacheprovider",
+        "--cov-report=json:/tmp/",
+    ):
+        assert needle in script
+    assert call["max_output_bytes"] >= 1024 * 1024  # coverage JSON must not be cut
+    assert str(call["repo"]) == str(tmp_path)
+
+
+def test_command_uses_unique_token_and_forwards_no_env():
+    argv_a, marker_a = build_coverage_command("aaa")
+    argv_b, marker_b = build_coverage_command("bbb")
+    assert marker_a != marker_b
+    assert "/tmp/cc-aaa.json" in argv_a[2] and "/tmp/cc-aaa.json" not in argv_b[2]
+
+
+# --- verdicts -----------------------------------------------------------------
+
+
+def test_all_added_lines_covered_is_confirmed(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, coverage=_cov([1, 2, 3, 4], []))
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert [e["verdict"] for e in ev] == ["CONFIRMED"]
+    assert "All 2 added production lines are covered" in ev[0]["summary"]
+    assert ev[0]["isolation"] == STRONG
+
+
+def test_uncovered_lines_warn_and_name_them(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, coverage=_cov([1, 2], [3, 4]))
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "WARNING"
+    assert "No test covers the change" in ev[0]["summary"]
+    assert "calc.py:3, 4" in ev[0]["details"]
+
+
+def test_weak_isolation_is_labelled(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, coverage=_cov([1, 2, 3, 4], []), isolation=WEAK)
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert "[weak isolation]" in ev[0]["summary"]
+    assert ev[0]["isolation"] == WEAK
+
+
+def test_failing_suite_is_refuted(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, exit_code=1, pytest_text="1 failed")
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "REFUTED"
+    assert "test suite fails" in ev[0]["summary"]
+    assert "1 failed" in ev[0]["details"]
+
+
+@pytest.mark.parametrize("code", [2, 3, 4])
+def test_suite_that_cannot_run_is_inconclusive(monkeypatch, tmp_path, code):
+    _fake_sandbox(monkeypatch, exit_code=code, pytest_text="ModuleNotFoundError: requests")
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "INCONCLUSIVE"
+    assert "could not run the test suite" in ev[0]["summary"]
+    assert "requests" in ev[0]["details"]
+
+
+def test_no_tests_collected_still_measures_coverage(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, exit_code=5, coverage=_cov([], [1, 2, 3, 4]))
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "WARNING"
+
+
+def test_timeout_is_inconclusive(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, exit_code=-9, timed_out=True)
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "INCONCLUSIVE"
+    assert "timed out" in ev[0]["summary"]
+
+
+def test_missing_coverage_json_is_inconclusive(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, coverage=None)
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF)
+    assert ev[0]["verdict"] == "INCONCLUSIVE"
+    assert "no coverage JSON" in ev[0]["summary"]
+
+
+# --- nothing to measure: the suite is not run ---------------------------------
+
+
+def test_empty_diff_is_inconclusive_without_running(monkeypatch, tmp_path):
+    _no_sandbox(monkeypatch)
+    ev = check_pr_coverage(str(tmp_path), "")
+    assert ev[0]["verdict"] == "INCONCLUSIVE"
+    assert "no production code lines added" in ev[0]["summary"]
+
+
+def test_test_only_diff_is_inconclusive_without_running(monkeypatch, tmp_path):
+    _no_sandbox(monkeypatch)
+    ev = check_pr_coverage(str(tmp_path), _TEST_ONLY_DIFF)
+    assert ev[0]["verdict"] == "INCONCLUSIVE"
+
+
+# --- claims_tests -------------------------------------------------------------
+
+
+def test_claims_tests_but_no_test_files_warns(monkeypatch, tmp_path):
+    _fake_sandbox(monkeypatch, coverage=_cov([1, 2, 3, 4], []))
+    claim = SimpleNamespace(claims_tests=True)
+    ev = check_pr_coverage(str(tmp_path), _ADD_SUB_DIFF, claim=claim)
+    items = [e for e in ev if e["check"] == "claims_tests"]
+    assert items and items[0]["verdict"] == "WARNING"
+    assert "diff touches no test files" in items[0]["summary"]
+
+
+def test_claims_tests_with_test_files_adds_nothing(monkeypatch, tmp_path):
+    _no_sandbox(monkeypatch)
+    claim = SimpleNamespace(claims_tests=True)
+    ev = check_pr_coverage(str(tmp_path), _TEST_ONLY_DIFF, claim=claim)
+    assert not [e for e in ev if e["check"] == "claims_tests"]
+
+
+def test_claims_tests_flagged_even_when_nothing_to_measure(monkeypatch, tmp_path):
+    _no_sandbox(monkeypatch)
+    readme = "\n".join(
         [
-            "diff --git a/calc.py b/calc.py",
-            "index a..b 100644",
-            "--- a/calc.py",
-            "+++ b/calc.py",
-            "@@ -1,2 +1,2 @@",
-            " def add(a, b):",
-            "-    return a + b",
-            "+    return a + b",
+            "diff --git a/README.md b/README.md",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1,2 @@",
+            " a",
+            "+b",
         ]
     )
+    ev = check_pr_coverage(str(tmp_path), readme, claim=SimpleNamespace(claims_tests=True))
+    assert {e["check"] for e in ev} == {"pr_coverage", "claims_tests"}
 
 
-def _canned_diff_new_file() -> str:
-    return "\n".join(
-        [
-            "diff --git a/new_module.py b/new_module.py",
-            "--- /dev/null",
-            "+++ b/new_module.py",
-            "@@ -0,0 +1,1 @@",
-            "+def hello():",
-        ]
-    )
+# --- output parsing: untrusted test output must not forge coverage ------------
 
 
-def _canned_diff_deleted() -> str:
-    return "\n".join(
-        [
-            "diff --git a/old.py b/old.py",
-            "--- a/old.py",
-            "+++ /dev/null",
-            "@@ -1,1 +0,0 @@",
-            "-def goodbye():",
-        ]
-    )
+def test_split_output_uses_the_real_marker_only():
+    real = "@@CLAIMCHECK-COVERAGE-real@@"
+    forged = "@@CLAIMCHECK-COVERAGE-evil@@"
+    out = f"1 passed\n{forged}\n{{\"files\": {{}}}}\n{real}\n{{\"files\": {{\"a.py\": {{}}}}}}"
+    text, data = _split_output(out, real)
+    assert data == {"files": {"a.py": {}}}
+    assert "1 passed" in text
 
 
-# ---------------------------------------------------------------
-# 3️⃣ e2e: run pytest with coverage on a tiny project + canned diff
-# ---------------------------------------------------------------
-def _e2e_coverage_json(tmp_dir: str) -> dict:
-    """Run pytest --cov on *tmp_dir* and return the coverage JSON dict."""
-    # Ensure the project's tests pass and coverage JSON is written.
-    ok = subprocess.run(
-        [os.sys.executable, "-m", "pytest", "-q", "--cov=.", "--cov-report=json:tmp_coverage.json"],
-        cwd=tmp_dir,
+def test_split_output_without_marker_or_bad_json():
+    assert _split_output("1 passed", "@@M@@") == ("1 passed", None)
+    assert _split_output("x\n@@M@@\nnot json", "@@M@@")[1] is None
+    assert _split_output("x\n@@M@@\n[1, 2]", "@@M@@")[1] is None
+
+
+# --- real sandbox (skipped without Docker or the rebuilt image) ---------------
+
+
+def _image_has_pytest_cov() -> bool:
+    if not docker_available():
+        return False
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "--network", "none", "claimcheck-sandbox:latest",
+         "python", "-c", "import pytest_cov"],
         capture_output=True,
-        text=True,
-        timeout=30,
+        timeout=60,
+        check=False,
     )
-    assert ok.returncode == 0, f"pytest failed: {ok.stdout}{ok.stderr}"
-    cov_path = os.path.join(tmp_dir, "tmp_coverage.json")
-    assert os.path.exists(cov_path)
-    with open(cov_path, encoding="utf-8") as f:
-        return json.load(f)
+    return proc.returncode == 0
 
 
-def test_e2e_covered():
-    """All added lines covered → CONFIRMED."""
-    tmp = _tmp_project()
-    _e2e_coverage_json(tmp)
-    diff_text = _canned_diff_simple()
-    ev = check_pr_coverage(tmp, diff_text)
-    # Should contain a CONFIRMED evidence item
-    conf_items = [x for x in ev if x["verdict"] == "CONFIRMED"]
-    assert any(
-        "added production lines are covered by tests" in x["summary"] for x in conf_items
+@pytest.mark.docker
+@pytest.mark.skipif(not _image_has_pytest_cov(), reason="needs Docker and a rebuilt sandbox image")
+def test_real_docker_run_reports_strong_isolation(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "calc.py").write_text(
+        "def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n"
     )
-
-
-def test_e2e_uncovered():
-    """Some added lines uncovered → WARNING."""
-    tmp = _tmp_project()
-    _e2e_coverage_json(tmp)
-    # Modify calc.py to add a line that the existing test does NOT cover
-    calc_path = os.path.join(tmp, "calc.py")
-    with open(calc_path, "a", encoding="utf-8") as f:
-        f.write("def sub(a, b):\n    return a - b\n")
-    # Re-run pytest; the new 'sub' lines won't be covered by test_add
-    _e2e_coverage_json(tmp)
-    # Valid unified diff: lines 3-4 are added and are NOT covered by test_add.
-    diff_text = "\n".join(
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+    )
+    diff = "\n".join(
         [
             "diff --git a/calc.py b/calc.py",
-            "index a..b 100644",
             "--- a/calc.py",
             "+++ b/calc.py",
-            "@@ -1,2 +1,4 @@",
+            "@@ -1,3 +1,5 @@",
             " def add(a, b):",
             "     return a + b",
+            " ",
             "+def sub(a, b):",
             "+    return a - b",
         ]
     )
-    ev = check_pr_coverage(tmp, diff_text)
-    warn_items = [x for x in ev if x["verdict"] == "WARNING"]
-    assert any("No test covers the change" in x["summary"] for x in warn_items)
-
-
-def test_e2e_no_production_changes():
-    """PR that only changes test files → INCONCLUSIVE."""
-    tmp = _tmp_project()
-    _canned_diff_new_file()  # new_module.py is not a test file per our heuristic;
-    # but we can force by providing a diff that only touches tests/
-    # For this test we just verify the function returns INCONCLUSIVE when prod is empty.
-    ev = check_pr_coverage(tmp, "# diff --git a/test_dummy.py b/test_dummy.py\n...")
-    [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
-    # May or may not hit depending on prod detection; just ensure no crash.
-
-
-# ---------------------------------------------------------------
-# 4️⃣ claims_tests evidence
-# ---------------------------------------------------------------
-def test_claims_tests_no_tests_in_diff():
-    """claims_tests=True + diff adds no test files → WARNING evidence."""
-    tmp = _tmp_project()
-    diff_text = """\
-diff --git a/calc.py b/calc.py
-index a..b 100644
---- a/calc.py
-+++ b/calc.py
-@@ -1,2 +1,2 @@
-def add(a, b):
-+def sub(a, b):
-"""
-    claim = type("Claim", (), {"claims_tests": True})()
-    ev = check_pr_coverage(tmp, diff_text, claim=claim)
-    claims_items = [x for x in ev if x["check"] == "claims_tests"]
-    assert any("diff touches no test files" in x["summary"] for x in claims_items)
-
-
-def test_claims_tests_with_tests_in_diff():
-    """claims_tests=True but diff does add test files → no extra evidence."""
-    tmp = _tmp_project()
-    diff_text = """\
-diff --git a/calc.py b/calc.py
-index a..b 100644
---- a/calc.py
-+++ b/calc.py
-@@ -1,2 +1,3 @@
-def add(a, b):
-+def sub(a, b):
-"""
-    claim = type("Claim", (), {"claims_tests": True})()
-    ev = check_pr_coverage(tmp, diff_text, claim=claim)
-    # Should NOT have a claims_tests evidence item (or it may be absent)
-    claims_items = [x for x in ev if x["check"] == "claims_tests"]
-    # either empty or not raising; we just check no crash
-    assert isinstance(claims_items, list)
-
-
-# ---------------------------------------------------------------
-# 5️⃣ empty / edge diffs
-# ---------------------------------------------------------------
-def test_empty_diff():
-    """Empty diff → INCONCLUSIVE."""
-    tmp = _tmp_project()
-    ev = check_pr_coverage(tmp, "")
-    inc_items = [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
-    assert any("no production code lines added" in x["summary"] for x in inc_items)
+    ev = check_pr_coverage(str(tmp_path), diff, timeout=120)
+    assert ev[0]["isolation"] == STRONG
+    assert ev[0]["verdict"] == "WARNING"  # sub() is never called by the suite
