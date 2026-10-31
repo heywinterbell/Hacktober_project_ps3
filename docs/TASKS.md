@@ -3,18 +3,18 @@
 Rules: init commit (HACKATHON.md) goes straight to `main`. Everything after is branch → PR → green CI → merge. Each PR names the models used and the coding assistant. With two members, either can merge the other's PR; if you are alone, merge your own.
 
 ## Init (before 8:30 PM)
-- [ ] Empty public repo with MIT license
-- [ ] `HACKATHON.md` committed directly to `main`
+- [x] Empty public repo with MIT license
+- [x] `HACKATHON.md` committed directly to `main`
 - [ ] Repo link submitted on OrganizerHQ (Best Open-Source AI Project)
-- [ ] Branch protection on `main`
+- [x] Branch protection on `main`
 
 ## PR 1: scaffold and workflow  (`feat/scaffold`)
-- [ ] Add staged files from `Plan/`: `pyproject.toml`, `.gitignore`, `LICENSE`, `README.md` stub
-- [ ] Relocate plan docs: `Plan/ARCHITECTURE.md`, `Plan/PLAN.md`, `Plan/TASKS.md`, `Plan/deployment.md` → `docs/`
-- [ ] Relocate workflow files: `Plan/ci.yml` → `.github/workflows/ci.yml`; `Plan/pull_request_template.md` → `.github/pull_request_template.md`
-- [ ] `src/claimcheck/` package, Typer CLI skeleton with `doctor`
-- [ ] `AGENTS.md` at repo root
-- [ ] CI green
+- [x] Add staged files from `Plan/`: `pyproject.toml`, `.gitignore`, `LICENSE`, `README.md` stub
+- [x] Relocate plan docs: `Plan/ARCHITECTURE.md`, `Plan/PLAN.md`, `Plan/TASKS.md`, `Plan/deployment.md` → `docs/`
+- [x] Relocate workflow files: `Plan/ci.yml` → `.github/workflows/ci.yml`; `Plan/pull_request_template.md` → `.github/pull_request_template.md`
+- [x] `src/claimcheck/` package, Typer CLI skeleton with `doctor`
+- [x] `AGENTS.md` at repo root
+- [x] CI green
 
 ## PR 2: models and extraction  (`feat/extract`)
 - [ ] `models.py` dataclasses/enums
