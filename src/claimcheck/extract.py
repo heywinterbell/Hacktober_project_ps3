@@ -8,7 +8,9 @@ it never replaces it, and any failure falls back to these rules silently.
 
 from __future__ import annotations
 
+import dataclasses
 import re
+from typing import Any
 
 from .models import Claim, ReportType
 
@@ -162,10 +164,42 @@ def extract_claim(text: str, report_type: ReportType) -> Claim:
     )
 
 
+def merge_llm(claim: Claim, extra: dict[str, Any]) -> Claim:
+    """Add already-sanitized model findings to a rule-based claim.
+
+    Rules always win; the model can only add symbols/versions the rules missed,
+    or supply a snippet/tests-claim the rules did not find.
+    """
+    symbols = list(claim.symbols)
+    symbols += [s for s in extra.get("symbols", []) if s not in symbols]
+    versions = list(claim.versions)
+    versions += [v for v in extra.get("versions", []) if v not in versions]
+    return dataclasses.replace(
+        claim,
+        symbols=symbols,
+        versions=versions,
+        repro_snippet=claim.repro_snippet or extra.get("repro_snippet"),
+        claims_tests=claim.claims_tests or bool(extra.get("claims_tests")),
+    )
+
+
 def extract_from_text(
-    text: str, kind_hint: str | None = None
+    text: str, kind_hint: str | None = None, *, use_llm: bool = False
 ) -> Claim:
-    """Classify then extract — convenience wrapper for CLI and server paths."""
+    """Classify then extract. With ``use_llm=True`` the local model may add
+    grounded details; any model failure silently leaves the rule-based claim."""
     title, body = split_title_body(text)
     report_type = classify(title, body, kind_hint)
-    return extract_claim(text, report_type)
+    claim = extract_claim(text, report_type)
+    if not use_llm:
+        return claim
+    try:
+        from . import llm
+
+        raw = llm.extract_with_llm(llm.REPORT_TO_CLAIM_TYPE[report_type], text)
+        if raw is not None:
+            claim = merge_llm(claim, llm.sanitize_extraction(text, raw))
+    except Exception:  # noqa: BLE001 - the model is optional; never break extraction
+        pass
+    return claim
+
