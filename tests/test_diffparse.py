@@ -1,7 +1,7 @@
 """Unit tests for ``src/claimcheck/diffparse.py``.
 
 Covers: simple change, new file, deleted file, rename, multiple hunks,
-binary files, "\ No newline at end of file", and edge cases.
+binary files, "\\ No newline at end of file", and edge cases.
 """
 
 from __future__ import annotations

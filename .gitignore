@@ -38,6 +38,13 @@ coverage/
 # Tool output
 graphify-out/
 *.log
+test_output.txt
+test_summary.txt
+test_results.txt
+coverage_output.txt
+ruff.txt
+ruff_out.txt
+ruff_output.txt
 
 # Local tool config
 .opencode/

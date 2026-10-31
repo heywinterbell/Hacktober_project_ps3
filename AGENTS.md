@@ -13,7 +13,7 @@ Project: ClaimCheck (Team Heywinterbell). Read `docs/ARCHITECTURE.md` and `docs/
 - CI must not require Docker, Ollama, network or secrets.
 
 ## Style
-- Python 3.11+, type hints, small functions, short comments, ruff-clean.
+- Python 3.10+ (3.11+ recommended), type hints, small functions, short comments, ruff-clean.
 - Add or update tests with every change. Keep coverage ≥ 80% on `src/`.
 - Prefer stdlib. Add a dependency only with a clear reason, and pin a range in `pyproject.toml`.
 

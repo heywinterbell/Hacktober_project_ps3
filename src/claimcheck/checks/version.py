@@ -28,16 +28,43 @@ def _git_tags(root: Path) -> list[str]:
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
+def _project_version_fallback(text: str) -> str | None:
+    """Read ``project.version`` without tomllib (Python 3.10 has no tomllib).
+
+    Scoped to the single field we need: a quoted scalar assigned to ``version``
+    inside the ``[project]`` table. Any ambiguity returns ``None`` so the
+    caller degrades to INCONCLUSIVE rather than guessing.
+    """
+    in_project = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            in_project = line == "[project]"
+            continue
+        if not in_project:
+            continue
+        match = re.match(r"""^version\s*=\s*["']([^"']+)["'](?:\s*#.*)?$""", line)
+        if match:
+            return match.group(1)
+    return None
+
+
 def _pyproject_version(root: Path) -> str | None:
     path = root / "pyproject.toml"
     if not path.is_file():
         return None
     try:
-        import tomllib
-    except ModuleNotFoundError:  # Python < 3.11 — not supported, but degrade gracefully
+        text = path.read_text(encoding="utf-8")
+    except OSError:
         return None
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 — tomllib is stdlib from 3.11
+        return _project_version_fallback(text)
+    try:
+        data = tomllib.loads(text)
     except Exception:
         return None
     version = data.get("project", {}).get("version")
