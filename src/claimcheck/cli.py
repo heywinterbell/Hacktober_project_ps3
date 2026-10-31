@@ -5,15 +5,14 @@ Phase 1 ships the doctor command; triage/pr/serve land with their checks.
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
-import tempfile
 
 import httpx
 import typer
-from claimcheck.report import Report, run_report
+
+from claimcheck.report import Report
 
 app = typer.Typer(
     help="ClaimCheck — triage that tests the claims. "

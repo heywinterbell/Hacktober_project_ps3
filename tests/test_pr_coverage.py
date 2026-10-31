@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 
-import pytest
-
-from claimcheck.checks.pr_coverage import intersect_uncovered, check_pr_coverage
+from claimcheck.checks.pr_coverage import check_pr_coverage, intersect_uncovered
 from claimcheck.diffparse import parse_unified_diff
 
 
@@ -28,7 +27,8 @@ def _tmp_project(*extra_files: tuple[str, str]) -> str:
     # default tiny project
     default = {
         "calc.py": "def add(a, b):\n    return a + b\n",
-        "tests/test_calc.py": "from claimcheck.tests.fixtures.sample_project import _dummy\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+        "tests/test_calc.py": "from claimcheck.tests.fixtures.sample_project import _dummy\n"
+        "\ndef test_add():\n    assert add(1, 2) == 3\n",
     }
     for name, content in {**default, **dict(extra_files)}.items():
         path = os.path.join(tmp, name)
@@ -146,7 +146,7 @@ def _e2e_coverage_json(tmp_dir: str) -> dict:
 def test_e2e_covered():
     """All added lines covered → CONFIRMED."""
     tmp = _tmp_project()
-    cov = _e2e_coverage_json(tmp)
+    _e2e_coverage_json(tmp)
     diff_text = _canned_diff_simple()
     ev = check_pr_coverage(tmp, diff_text)
     # Should contain a CONFIRMED evidence item
@@ -157,13 +157,13 @@ def test_e2e_covered():
 def test_e2e_uncovered():
     """Some added lines uncovered → WARNING."""
     tmp = _tmp_project()
-    cov = _e2e_coverage_json(tmp)
+    _e2e_coverage_json(tmp)
     # Modify calc.py to add a line that the existing test does NOT cover
     calc_path = os.path.join(tmp, "calc.py")
     with open(calc_path, "a", encoding="utf-8") as f:
         f.write("def sub(a, b):\n    return a - b\n")
     # Re-run pytest; the new 'sub' lines won't be covered by test_add
-    cov = _e2e_coverage_json(tmp)
+    _e2e_coverage_json(tmp)
     diff_text = parse_unified_diff(
         "\n".join(
             [
@@ -187,11 +187,11 @@ def test_e2e_uncovered():
 def test_e2e_no_production_changes():
     """PR that only changes test files → INCONCLUSIVE."""
     tmp = _tmp_project()
-    diff_text = _canned_diff_new_file()  # new_module.py is not a test file per our heuristic;
+    _canned_diff_new_file()  # new_module.py is not a test file per our heuristic;
     # but we can force by providing a diff that only touches tests/
     # For this test we just verify the function returns INCONCLUSIVE when prod is empty.
     ev = check_pr_coverage(tmp, "# diff --git a/test_dummy.py b/test_dummy.py\n...")
-    inc_items = [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
+    [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
     # May or may not hit depending on prod detection; just ensure no crash.
 
 

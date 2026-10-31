@@ -9,11 +9,10 @@ import json
 import os
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from claimcheck.diffparse import parse_unified_diff
 from claimcheck.models import Claim as ClaimModel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,15 +25,17 @@ def _is_test_path(path: str) -> bool:
     """Return True if *path* is under a typical test directory."""
     norm = os.path.normpath(path)
     parts = norm.replace("\\", "/").split("/")
-    return any(p in ("tests", "test") for p in parts) or norm.endswith("_test.py") or norm.endswith("test.py")
+    tests_found = any(p in ("tests", "test") for p in parts)
+    ends_test_file = norm.endswith("_test.py") or norm.endswith("test.py")
+    return tests_found or ends_test_file
 
 
-def _production_added_lines(diff: Dict[str, Set[int]]) -> List[tuple[str, Set[int]]]:
+def _production_added_lines(diff: dict[str, set[int]]) -> list[tuple[str, set[int]]]:
     """Return ``(filepath, added_line_numbers)`` for *production* files only.
 
     Excludes test files, binary files, and deleted files.
     """
-    result: List[tuple[str, Set[int]]] = []
+    result: list[tuple[str, set[int]]] = []
     for filepath, added in diff.items():
         if not filepath:
             continue
@@ -46,7 +47,7 @@ def _production_added_lines(diff: Dict[str, Set[int]]) -> List[tuple[str, Set[in
     return result
 
 
-def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> Dict[str, Set[int]]:
+def intersect_uncovered(diff: dict[str, set[int]], coverage: dict[str, Any]) -> dict[str, set[int]]:
     """Return a dict mapping *filepath* → set of added line numbers **not** covered.
 
     Coverage JSON is expected in the standard ``coverage`` format::
@@ -64,12 +65,12 @@ def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> 
 
     Lines are 1‑indexed.
     """
-    uncovered: Dict[str, Set[int]] = {}
+    uncovered: dict[str, set[int]] = {}
     files_in_coverage = coverage.get("files", {})
     for filepath, added_lines in diff.items():
         if not added_lines:
             continue
-        executed_set: Set[int] = set()
+        executed_set: set[int] = set()
         file_data = files_in_coverage.get(filepath)
         if file_data is not None:
             executed_set = set(file_data.get("executed_lines", []))
@@ -83,7 +84,7 @@ def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> 
 # Core check
 # ---------------------------------------------------------------------------
 
-def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> Optional[Dict[str, Any]]:
+def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> dict[str, Any] | None:
     """Run ``pytest -q --cov=. --cov-report=json`` and return the coverage JSON dict,
     or ``None`` if it cannot be collected.
 
@@ -92,7 +93,9 @@ def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> Optio
     a few KB) passes through untruncated.
     """
     tmp_dir = tempfile.mkdtemp(prefix="prcov-")
-    command = [os.sys.executable, "-m", "pytest", "-q", "--cov=.", "--cov-report=json:" + os.path.join(tmp_dir, _TMP_COVERAGE)]
+    cmd = [os.sys.executable, "-m", "pytest", "-q", "--cov="]
+    cov_report = "--cov-report=json:" + os.path.join(tmp_dir, _TMP_COVERAGE)
+    command = cmd + [cov_report]
     # run inside the repo so coverage.json lands at repo root
     result = subprocess.run(
         command,
@@ -121,9 +124,9 @@ def check_pr_coverage(
     repo_path: str,
     diff_text: str,
     *,
-    claim: Optional[ClaimModel] = None,
+    claim: ClaimModel | None = None,
     timeout: float = 60.0,
-) -> List[Any]:
+) -> list[Any]:
     """Analyse a PR diff against a test-suite run with coverage.
 
     Returns a list of evidence items that combine into a final verdict
@@ -168,10 +171,10 @@ def check_pr_coverage(
 
     # 6️⃣ some production lines uncovered → WARNING
     if uncovered:
-        uncovered_lines: List[str] = []
+        uncovered_lines: list[str] = []
         for fp, lines in sorted(uncovered.items()):
             clean = os.path.basename(fp)
-            line_str = ", ".join(str(l) for l in sorted(lines))
+            line_str = ", ".join(str(i) for i in sorted(lines))
             uncovered_lines.append(f"{clean}:{line_str}")
         uncovered_detail = "; ".join(uncovered_lines)
 

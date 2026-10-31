@@ -14,7 +14,7 @@ The output format matches the slide deck expectations:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -33,10 +33,10 @@ class Report:
     """Complete Markdown report for a single claim."""
 
     claim_type: str  # "symbols" | "reproduction" | "pr_coverage"
-    evidence: List[EvidenceItem]
+    evidence: list[EvidenceItem]
     sandboxed: bool
     # derived fields for the template
-    _verdict_icons: Dict[str, str] = field(
+    _verdict_icons: dict[str, str] = field(
         default_factory=lambda: {
             "CONFIRMED": "✓",
             "WARNING": "!",
@@ -71,7 +71,7 @@ class Report:
 
     def _evidence_block(self) -> str:
         """Render all evidence items as a concatenated block."""
-        blocks: List[str] = []
+        blocks: list[str] = []
         for item in self.evidence:
             blocks.append(self._details_collapsible(item))
         return "".join(blocks)
@@ -104,17 +104,17 @@ class Report:
     def from_checks(
         claim_type: str,
         *,
-        symbols_evidence: Optional[List[Dict[str, Any]]] = None,
-        repro_evidence: Optional[List[Dict[str, Any]]] = None,
-        pr_cov_evidence: Optional[List[Dict[str, Any]]] = None,
+        symbols_evidence: list[dict[str, Any]] | None = None,
+        repro_evidence: list[dict[str, Any]] | None = None,
+        pr_cov_evidence: list[dict[str, Any]] | None = None,
         sandboxed: bool = True,
-    ) -> "Report":
+    ) -> Report:
         """Construct a ``Report`` from raw evidence dicts.
 
         Exactly one of the three evidence lists should be non‐None; the
         others are ignored.
         """
-        evidence: List[EvidenceItem] = []
+        evidence: list[EvidenceItem] = []
 
         if claim_type == "symbols" and symbols_evidence:
             for d in symbols_evidence:
@@ -171,9 +171,9 @@ class Report:
 def run_report(
     claim_type: str,
     *,
-    symbols_evidence: Optional[List[Dict[str, Any]]] = None,
-    repro_evidence: Optional[List[Dict[str, Any]]] = None,
-    pr_cov_evidence: Optional[List[Dict[str, Any]]] = None,
+    symbols_evidence: list[dict[str, Any]] | None = None,
+    repro_evidence: list[dict[str, Any]] | None = None,
+    pr_cov_evidence: list[dict[str, Any]] | None = None,
     sandboxed: bool = True,
 ) -> str:
     """Convenience wrapper that returns the Markdown string for a given claim type."""
