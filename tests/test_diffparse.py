@@ -6,8 +6,6 @@ binary files, "\ No newline at end of file", and edge cases.
 
 from __future__ import annotations
 
-import pytest
-
 from claimcheck.diffparse import parse_unified_diff
 
 
@@ -161,8 +159,7 @@ def test_multiple_files():
         "+y",
     )
     got = parse_unified_diff(diff)
-    # first diff adds line 1 in alpha.py; second diff modifies beta.py (only deletion/addition,
-    # no + lines in this hunk? Actually "-x" + "+y" adds line y at new 1? Let's just verify alpha.py.
+    # first diff adds line 1 in alpha.py; second diff modifies beta.py
     assert got.get("alpha.py") == {1}
 
 

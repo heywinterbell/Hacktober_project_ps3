@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from claimcheck.diffparse import parse_unified_diff
 from claimcheck.models import Claim as ClaimModel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,15 +26,17 @@ def _is_test_path(path: str) -> bool:
     """Return True if *path* is under a typical test directory."""
     norm = os.path.normpath(path)
     parts = norm.replace("\\", "/").split("/")
-    return any(p in ("tests", "test") for p in parts) or norm.endswith("_test.py") or norm.endswith("test.py")
+    tests_found = any(p in ("tests", "test") for p in parts)
+    ends_test_file = norm.endswith("_test.py") or norm.endswith("test.py")
+    return tests_found or ends_test_file
 
 
-def _production_added_lines(diff: Dict[str, Set[int]]) -> List[tuple[str, Set[int]]]:
+def _production_added_lines(diff: dict[str, set[int]]) -> list[tuple[str, set[int]]]:
     """Return ``(filepath, added_line_numbers)`` for *production* files only.
 
     Excludes test files, binary files, and deleted files.
     """
-    result: List[tuple[str, Set[int]]] = []
+    result: list[tuple[str, set[int]]] = []
     for filepath, added in diff.items():
         if not filepath:
             continue
@@ -46,7 +48,7 @@ def _production_added_lines(diff: Dict[str, Set[int]]) -> List[tuple[str, Set[in
     return result
 
 
-def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> Dict[str, Set[int]]:
+def intersect_uncovered(diff: dict[str, set[int]], coverage: dict[str, Any]) -> dict[str, set[int]]:
     """Return a dict mapping *filepath* → set of added line numbers **not** covered.
 
     Coverage JSON is expected in the standard ``coverage`` format::
@@ -64,12 +66,12 @@ def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> 
 
     Lines are 1‑indexed.
     """
-    uncovered: Dict[str, Set[int]] = {}
+    uncovered: dict[str, set[int]] = {}
     files_in_coverage = coverage.get("files", {})
     for filepath, added_lines in diff.items():
         if not added_lines:
             continue
-        executed_set: Set[int] = set()
+        executed_set: set[int] = set()
         file_data = files_in_coverage.get(filepath)
         if file_data is not None:
             executed_set = set(file_data.get("executed_lines", []))
@@ -83,7 +85,7 @@ def intersect_uncovered(diff: Dict[str, Set[int]], coverage: Dict[str, Any]) -> 
 # Core check
 # ---------------------------------------------------------------------------
 
-def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> Optional[Dict[str, Any]]:
+def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> dict[str, Any] | None:
     """Run ``pytest -q --cov=. --cov-report=json`` and return the coverage JSON dict,
     or ``None`` if it cannot be collected.
 
@@ -92,38 +94,38 @@ def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> Optio
     a few KB) passes through untruncated.
     """
     tmp_dir = tempfile.mkdtemp(prefix="prcov-")
-    command = [os.sys.executable, "-m", "pytest", "-q", "--cov=.", "--cov-report=json:" + os.path.join(tmp_dir, _TMP_COVERAGE)]
-    # run inside the repo so coverage.json lands at repo root
-    result = subprocess.run(
-        command,
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        # suite did not pass; still may have coverage JSON, but we treat as failure
-        # caller can decide; return None to signal inconclusive
-        return None
-
-    cov_path = os.path.join(repo_path, _TMP_COVERAGE)
-    if not os.path.exists(cov_path):
-        return None
+    cov_path = os.path.join(tmp_dir, _TMP_COVERAGE)
+    command = [
+        os.sys.executable, "-m", "pytest", "-q",
+        "--cov=.",
+        "--cov-report=json:" + cov_path,
+    ]
     try:
+        result = subprocess.run(
+            command,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            # suite did not pass -> no usable coverage; signal inconclusive
+            return None
         with open(cov_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data
+            return json.load(f)
     except Exception:
         return None
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def check_pr_coverage(
     repo_path: str,
     diff_text: str,
     *,
-    claim: Optional[ClaimModel] = None,
+    claim: ClaimModel | None = None,
     timeout: float = 60.0,
-) -> List[Any]:
+) -> list[Any]:
     """Analyse a PR diff against a test-suite run with coverage.
 
     Returns a list of evidence items that combine into a final verdict
@@ -168,10 +170,10 @@ def check_pr_coverage(
 
     # 6️⃣ some production lines uncovered → WARNING
     if uncovered:
-        uncovered_lines: List[str] = []
+        uncovered_lines: list[str] = []
         for fp, lines in sorted(uncovered.items()):
             clean = os.path.basename(fp)
-            line_str = ", ".join(str(l) for l in sorted(lines))
+            line_str = ", ".join(str(i) for i in sorted(lines))
             uncovered_lines.append(f"{clean}:{line_str}")
         uncovered_detail = "; ".join(uncovered_lines)
 
@@ -184,20 +186,6 @@ def check_pr_coverage(
                 "isolation": "weak",
             }
         ]
-
-        # claims_tests extra evidence
-        if claim is not None and claim.claims_tests:
-            test_files_changed = any(_is_test_path(fp) for fp, _ in prod)
-            if not test_files_changed:
-                evidence.append(
-                    {
-                        "check": "claims_tests",
-                        "verdict": "WARNING",
-                        "summary": '✗ claim says "adds tests" but diff touches no test files',
-                        "details": "",
-                        "isolation": "weak",
-                    }
-                )
     else:
         # all production added lines covered → CONFIRMED
         total_added = sum(len(add) for _, add in prod)
@@ -211,10 +199,20 @@ def check_pr_coverage(
             }
         ]
 
-        # claims_tests positive note (optional)
-        if claim is not None and claim.claims_tests:
-            test_files_changed = any(_is_test_path(fp) for fp, _ in prod)
-            # if tests present, we simply do not add extra WARNING evidence;
-            # the CONFIRMED verdict already covers it.
+    # claims_tests evidence — independent of the coverage outcome: the claim
+    # says "adds tests", so flag it when the diff touches no test files.
+    # (Must check the full diff, not *prod* — prod excludes test files.)
+    if claim is not None and claim.claims_tests:
+        test_files_changed = any(_is_test_path(fp) for fp in diff)
+        if not test_files_changed:
+            evidence.append(
+                {
+                    "check": "claims_tests",
+                    "verdict": "WARNING",
+                    "summary": '✗ claim says "adds tests" but diff touches no test files',
+                    "details": "",
+                    "isolation": "weak",
+                }
+            )
 
     return evidence

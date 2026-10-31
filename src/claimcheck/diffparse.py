@@ -8,7 +8,6 @@ and rename metadata are handled; callers exclude test/non‑code paths.
 from __future__ import annotations
 
 import re
-from typing import Dict, Set
 
 #: Regex for a hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
 _HUNK_RE = re.compile(
@@ -26,7 +25,7 @@ def _strip_prefix(path: str) -> str:
     return p
 
 
-def parse_unified_diff(diff_text: str) -> Dict[str, Set[int]]:
+def parse_unified_diff(diff_text: str) -> dict[str, set[int]]:
     """Parse a unified diff and return ``{filepath: set(added_line_numbers)}``.
 
     * ``filepath`` is the new‑file path (``b/`` side of ``diff --git``).
@@ -35,12 +34,12 @@ def parse_unified_diff(diff_text: str) -> Dict[str, Set[int]]:
     * Binary files, deleted files and renames are handled; the returned dict
       may contain entries with empty sets for those cases.
     """
-    result: Dict[str, Set[int]] = {}
+    result: dict[str, set[int]] = {}
 
     lines = diff_text.splitlines()
     i = 0
     current_path: str | None = None
-    current_added: Set[int] = set()
+    current_added: set[int] = set()
     in_hunk = False
     new_ln = 0  # 1‑indexed line number in the new file
     old_ln = 0
@@ -73,8 +72,9 @@ def parse_unified_diff(diff_text: str) -> Dict[str, Set[int]]:
                     b_path = token[2:]  # strip b/
 
             # determine file kind
-            is_new = a_path == "/dev/null"
-            is_deleted = b_path == "/dev/null"
+            is_new = a_path == "/dev/null"  # noqa: F841
+            is_deleted = b_path == "/dev/null"  # noqa: F841
+            
             # normal case: both sides are real paths
             current_path = _strip_prefix(b_path)
             current_added = set()
@@ -105,7 +105,9 @@ def parse_unified_diff(diff_text: str) -> Dict[str, Set[int]]:
             # The binary line may have appeared right after diff --git; if we are
             # still in the binary block, keep skipping.  When we hit the next
             # diff --git we reset state.
-            if not line.startswith("diff --git") and not line.startswith("\t") and not line.startswith(" "):
+            if (not line.startswith("diff --git")
+                and not line.startswith("\t")
+                and not line.startswith(" ")):
                 # also skip lines that look like they belong to the binary block;
                 # but we simplify: just ignore everything until next diff marker.
                 continue

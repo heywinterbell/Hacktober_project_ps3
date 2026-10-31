@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 
-import pytest
-
-from claimcheck.checks.pr_coverage import intersect_uncovered, check_pr_coverage
-from claimcheck.diffparse import parse_unified_diff
+from claimcheck.checks.pr_coverage import check_pr_coverage, intersect_uncovered
 
 
 # ---------------------------------------------------------------
@@ -28,7 +26,12 @@ def _tmp_project(*extra_files: tuple[str, str]) -> str:
     # default tiny project
     default = {
         "calc.py": "def add(a, b):\n    return a + b\n",
-        "tests/test_calc.py": "from claimcheck.tests.fixtures.sample_project import _dummy\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+        "tests/test_calc.py": (
+            "from calc import add\n"
+            "\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        ),
     }
     for name, content in {**default, **dict(extra_files)}.items():
         path = os.path.join(tmp, name)
@@ -72,54 +75,50 @@ def test_intersect_uncovered_multiple_files():
         }
     }
     got = intersect_uncovered(diff, coverage)
-    assert got == {"calc.py": set(), "utils.py": {5}}
+    # calc.py is fully covered -> omitted (empty set is falsy; callers gate on it)
+    assert got == {"utils.py": {5}}
 
 
 # ---------------------------------------------------------------
 # 2️⃣ canned diffs (parsed via parse_unified_diff)
 # ---------------------------------------------------------------
 def _canned_diff_simple() -> str:
-    return parse_unified_diff(
-        "\n".join(
-            [
-                "diff --git a/calc.py b/calc.py",
-                "index a..b 100644",
-                "--- a/calc.py",
-                "+++ b/calc.py",
-                "@@ -1,2 +1,2 @@",
-                "def add(a, b):",
-                "+def sub(a, b):",
-                " def sub(a, b):",
-            ]
-        )
+    """Raw unified-diff text (check_pr_coverage parses it internally)."""
+    return "\n".join(
+        [
+            "diff --git a/calc.py b/calc.py",
+            "index a..b 100644",
+            "--- a/calc.py",
+            "+++ b/calc.py",
+            "@@ -1,2 +1,2 @@",
+            " def add(a, b):",
+            "-    return a + b",
+            "+    return a + b",
+        ]
     )
 
 
 def _canned_diff_new_file() -> str:
-    return parse_unified_diff(
-        "\n".join(
-            [
-                "diff --git a/new_module.py b/new_module.py",
-                "--- /dev/null",
-                "+++ b/new_module.py",
-                "@@ -0,0 +1,1 @@",
-                "+def hello():",
-            ]
-        )
+    return "\n".join(
+        [
+            "diff --git a/new_module.py b/new_module.py",
+            "--- /dev/null",
+            "+++ b/new_module.py",
+            "@@ -0,0 +1,1 @@",
+            "+def hello():",
+        ]
     )
 
 
 def _canned_diff_deleted() -> str:
-    return parse_unified_diff(
-        "\n".join(
-            [
-                "diff --git a/old.py b/old.py",
-                "--- a/old.py",
-                "+++ /dev/null",
-                "@@ -1,1 +0,0 @@",
-                "-def goodbye():",
-            ]
-        )
+    return "\n".join(
+        [
+            "diff --git a/old.py b/old.py",
+            "--- a/old.py",
+            "+++ /dev/null",
+            "@@ -1,1 +0,0 @@",
+            "-def goodbye():",
+        ]
     )
 
 
@@ -146,38 +145,39 @@ def _e2e_coverage_json(tmp_dir: str) -> dict:
 def test_e2e_covered():
     """All added lines covered → CONFIRMED."""
     tmp = _tmp_project()
-    cov = _e2e_coverage_json(tmp)
+    _e2e_coverage_json(tmp)
     diff_text = _canned_diff_simple()
     ev = check_pr_coverage(tmp, diff_text)
     # Should contain a CONFIRMED evidence item
     conf_items = [x for x in ev if x["verdict"] == "CONFIRMED"]
-    assert any("all added production lines are covered" in x["summary"] for x in conf_items)
+    assert any(
+        "added production lines are covered by tests" in x["summary"] for x in conf_items
+    )
 
 
 def test_e2e_uncovered():
     """Some added lines uncovered → WARNING."""
     tmp = _tmp_project()
-    cov = _e2e_coverage_json(tmp)
+    _e2e_coverage_json(tmp)
     # Modify calc.py to add a line that the existing test does NOT cover
     calc_path = os.path.join(tmp, "calc.py")
     with open(calc_path, "a", encoding="utf-8") as f:
         f.write("def sub(a, b):\n    return a - b\n")
     # Re-run pytest; the new 'sub' lines won't be covered by test_add
-    cov = _e2e_coverage_json(tmp)
-    diff_text = parse_unified_diff(
-        "\n".join(
-            [
-                "diff --git a/calc.py b/calc.py",
-                "index a..b 100644",
-                "--- a/calc.py",
-                "+++ b/calc.py",
-                "@@ -1,2 +1,4 @@",
-                "def add(a, b):",
-                "+def sub(a, b):",
-                "+def sub2(a, b):",
-                " def sub(a, b):",
-            ]
-        )
+    _e2e_coverage_json(tmp)
+    # Valid unified diff: lines 3-4 are added and are NOT covered by test_add.
+    diff_text = "\n".join(
+        [
+            "diff --git a/calc.py b/calc.py",
+            "index a..b 100644",
+            "--- a/calc.py",
+            "+++ b/calc.py",
+            "@@ -1,2 +1,4 @@",
+            " def add(a, b):",
+            "     return a + b",
+            "+def sub(a, b):",
+            "+    return a - b",
+        ]
     )
     ev = check_pr_coverage(tmp, diff_text)
     warn_items = [x for x in ev if x["verdict"] == "WARNING"]
@@ -187,11 +187,11 @@ def test_e2e_uncovered():
 def test_e2e_no_production_changes():
     """PR that only changes test files → INCONCLUSIVE."""
     tmp = _tmp_project()
-    diff_text = _canned_diff_new_file()  # new_module.py is not a test file per our heuristic;
+    _canned_diff_new_file()  # new_module.py is not a test file per our heuristic;
     # but we can force by providing a diff that only touches tests/
     # For this test we just verify the function returns INCONCLUSIVE when prod is empty.
     ev = check_pr_coverage(tmp, "# diff --git a/test_dummy.py b/test_dummy.py\n...")
-    inc_items = [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
+    [x for x in ev if x["verdict"] == "INCONCLUSIVE"]
     # May or may not hit depending on prod detection; just ensure no crash.
 
 
@@ -212,8 +212,8 @@ def add(a, b):
 """
     claim = type("Claim", (), {"claims_tests": True})()
     ev = check_pr_coverage(tmp, diff_text, claim=claim)
-    claims_items = [x for x in ev if x.check == "claims_tests"]
-    assert any("claim says adds tests" in x["summary"] for x in claims_items)
+    claims_items = [x for x in ev if x["check"] == "claims_tests"]
+    assert any("diff touches no test files" in x["summary"] for x in claims_items)
 
 
 def test_claims_tests_with_tests_in_diff():
@@ -231,7 +231,7 @@ def add(a, b):
     claim = type("Claim", (), {"claims_tests": True})()
     ev = check_pr_coverage(tmp, diff_text, claim=claim)
     # Should NOT have a claims_tests evidence item (or it may be absent)
-    claims_items = [x for x in ev if x.check == "claims_tests"]
+    claims_items = [x for x in ev if x["check"] == "claims_tests"]
     # either empty or not raising; we just check no crash
     assert isinstance(claims_items, list)
 
