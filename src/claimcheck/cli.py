@@ -1,18 +1,22 @@
 """ClaimCheck CLI — triage that tests the claims.
 
-Phase 1 ships the doctor command; triage/pr/serve land with their checks.
+Commands: doctor, triage and pr (both run real checks). `serve` is not implemented yet.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+from typing import Annotated, NoReturn
 
 import httpx
 import typer
 
-from claimcheck.report import Report
+_CWD = Path(".")
+_EXIT_CODES = {"confirmed": 0, "refuted": 1, "warning": 2, "inconclusive": 2}
 
 app = typer.Typer(
     help="ClaimCheck — triage that tests the claims. "
@@ -76,89 +80,121 @@ def doctor() -> None:
 
 @app.command()
 def triage(
-    repo: str = typer.Argument(..., help="Path to the repo to triage"),
-    claim_snippet: str = typer.Argument(..., help="The claim's repro snippet or symbol query"),
+    repo: Annotated[
+        Path, typer.Option("--repo", help="Repository to triage (default: .)")
+    ] = _CWD,
+    report: Annotated[
+        Path, typer.Option("--report", "-r", help="Report text file ('-' reads stdin)")
+    ] = Path("-"),
+    no_llm: Annotated[
+        bool, typer.Option("--no-llm", help="Rule-based extraction only")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Machine-readable output")
+    ] = False,
 ) -> None:
-    """Run the symbol and reproduction checks on a local repo.
+    """Triage a bug or security report against a local repo.
 
-    Emits a Markdown report to stdout that can be posted on a PR.
+    Exit code: 0 confirmed, 1 refuted, 2 warning or inconclusive, 3 usage error.
     """
-    # --- symbols check (very simplified: just look for a bare name) ---
-    symbols_evidence: list = []
-    if "from sample_fixture" in claim_snippet or "import" in claim_snippet:
-        # placeholder: symbol exists
-        symbols_evidence.append(
-            {
-                "check": "symbol_exists",
-                "verdict": "CONFIRMED",
-                "summary": "✓ symbol reference found in snippet",
-                "details": claim_snippet,
-                "isolation": "weak",
-            }
-        )
-    else:
-        symbols_evidence.append(
-            {
-                "check": "symbol_exists",
-                "verdict": "REFUTED",
-                "summary": "✗ symbol not found",
-                "details": f"Could not detect any known symbol in: {claim_snippet}",
-                "isolation": "weak",
-            }
-        )
+    from claimcheck import llm
+    from claimcheck.pipeline import run_triage
 
-    # --- reproduction check ---
-    repro_evidence: list = []
-    # Very naive: if snippet contains 'crash' or 'error' => CONFIRMED
-    lowered = claim_snippet.lower()
-    if "crash" in lowered or "error" in lowered:
-        repro_evidence.append(
-            {
-                "check": "reproduction",
-                "verdict": "CONFIRMED",
-                "summary": "✓ crash/error reproduced",
-                "details": f"Snippet triggered issue: {claim_snippet}",
-                "isolation": "weak",
-            }
-        )
-    else:
-        repro_evidence.append(
-            {
-                "check": "reproduction",
-                "verdict": "REFUTED",
-                "summary": "✓ could not reproduce",
-                "details": f"Snippet ran clean: {claim_snippet}",
-                "isolation": "weak",
-            }
-        )
+    _require_repo(repo)
+    try:
+        text = sys.stdin.read() if str(report) == "-" else report.read_text(encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"error: cannot read report: {exc}", err=True)
+        raise typer.Exit(3) from exc
+    use_llm = (not no_llm) and llm.llm_enabled()
+    try:
+        result = run_triage(text, repo, use_llm=use_llm)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(3) from exc
 
-    markdown = Report.from_checks(
-        "symbols",
-        symbols_evidence=symbols_evidence,
-        repro_evidence=repro_evidence,
-        sandboxed=False,
-    ).to_markdown()
-    typer.echo(markdown)
+    _emit(result, as_json)
 
 
 @app.command()
 def pr(
-    repo: str = typer.Argument(..., help="Path to the repo to analyze"),
-    diff: str = typer.Argument(..., help="Unified-diff text to evaluate"),
+    repo: Annotated[
+        Path, typer.Option("--repo", help="Repository to check (default: .)")
+    ] = _CWD,
+    diff_file: Annotated[
+        Path | None, typer.Option("--diff-file", help="Unified diff file ('-' reads stdin)")
+    ] = None,
+    base: Annotated[str | None, typer.Option("--base", help="Base ref (with --head)")] = None,
+    head: Annotated[
+        str | None, typer.Option("--head", help="Head ref; tests run on a checkout of it")
+    ] = None,
+    description: Annotated[
+        Path | None, typer.Option("--report", "-r", help="PR title/body file (optional)")
+    ] = None,
+    no_llm: Annotated[
+        bool, typer.Option("--no-llm", help="Rule-based extraction only")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Machine-readable output")
+    ] = False,
 ) -> None:
-    """Run the PR coverage check (diff × coverage) and emit a Markdown report.
+    """Check a PR: do tests, run in the Docker sandbox, cover the changed lines?
 
-    This is the ``PR case`` (`! No test covers the change`).
+    Give either --diff-file, or --base and --head (runs `git diff base...head`
+    and tests the head commit). Exit code: 0 confirmed, 1 refuted (suite fails),
+    2 warning or inconclusive, 3 usage error.
     """
-    from claimcheck.checks.pr_coverage import check_pr_coverage
+    from claimcheck import llm
+    from claimcheck.pipeline import checked_out, git_diff, run_pr
 
-    ev = check_pr_coverage(repo, diff)
-    markdown = Report.from_checks(
-        "pr_coverage",
-        pr_cov_evidence=ev,
-        sandboxed=False,
-    ).to_markdown()
-    typer.echo(markdown)
+    _require_repo(repo)
+    if diff_file is not None and (base or head):
+        _usage("use either --diff-file or --base/--head, not both")
+    if diff_file is None and not (base and head):
+        _usage("give --diff-file, or both --base and --head")
+    use_llm = (not no_llm) and llm.llm_enabled()
+    try:
+        description_text = _read_text(description, "PR description") if description else ""
+        if diff_file is not None:
+            diff_text = _read_text(diff_file, "diff")
+            result = run_pr(diff_text, repo, description=description_text, use_llm=use_llm)
+        else:
+            assert base and head  # guarded above
+            diff_text = git_diff(repo, base, head)
+            with checked_out(repo, head) as work:
+                result = run_pr(diff_text, work, description=description_text, use_llm=use_llm)
+    except ValueError as exc:  # bad ref, git failure, unreadable file
+        _usage(str(exc))
+    _emit(result, as_json)
+
+
+def _usage(message: str) -> NoReturn:
+    typer.echo(f"error: {message}", err=True)
+    raise typer.Exit(3)
+
+
+def _require_repo(repo: Path) -> None:
+    if not repo.is_dir():
+        _usage(f"repo path is not a directory: {repo}")
+
+
+def _read_text(path: Path, what: str) -> str:
+    """Read a file ('-' = stdin); unreadable input is a usage error."""
+    try:
+        return sys.stdin.read() if str(path) == "-" else path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"cannot read {what}: {exc}") from exc
+
+
+def _emit(result, as_json: bool) -> None:
+    """Print the report (Markdown or JSON) and exit with the verdict code."""
+    from claimcheck.report import render_markdown, to_json_dict
+
+    if as_json:
+        typer.echo(json.dumps(to_json_dict(result), indent=2, default=str))
+    else:
+        typer.echo(render_markdown(result))
+    raise typer.Exit(_EXIT_CODES.get(str(result.overall.value), 2))
 
 
 @app.command()

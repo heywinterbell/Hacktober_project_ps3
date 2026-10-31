@@ -185,3 +185,60 @@ def run_report(
         sandboxed=sandboxed,
     )
     return report.to_markdown()
+
+
+# ---------------------------------------------------------------------------
+# Rendering for the pipeline's ``models.Report``
+# ---------------------------------------------------------------------------
+
+# Checks that run code in the sandbox and therefore report an isolation level.
+_EXECUTING_CHECKS = ("reproduction", "pr_coverage")
+
+_ICONS = {"confirmed": "✓", "warning": "!", "refuted": "✗", "inconclusive": "?"}
+
+
+def _isolation_line(evidence) -> str:
+    seen = {
+        str(e.details.get("isolation"))
+        for e in evidence
+        if e.check in _EXECUTING_CHECKS and e.details.get("isolation") in ("strong", "weak")
+    }
+    if not seen:
+        return "Isolation: no code was executed"
+    level = "strong" if "strong" in seen else "weak"
+    return f"Isolation: **{level}**"
+
+
+def render_markdown(report) -> str:
+    """Render a ``models.Report`` as human-readable Markdown."""
+    icon = _ICONS.get(str(report.overall.value), "?")
+    lines = [
+        f"## {report.claim.type.value.title()} check",
+        f"**Verdict:** {icon} {report.overall.value}  {_isolation_line(report.evidence)}",
+        "",
+    ]
+    for e in report.evidence:
+        eicon = _ICONS.get(str(e.verdict.value), "?")
+        lines.append(f"- {eicon} **{e.check}**: {e.summary}")
+    return "\n".join(lines) + "\n"
+
+
+def to_json_dict(report) -> dict:
+    """Serialise a ``models.Report`` to a plain dict (for ``json.dumps``)."""
+    return {
+        "verdict": str(report.overall.value),
+        "claim": {
+            "type": str(report.claim.type.value),
+            "title": report.claim.title,
+        },
+        "evidence": [
+            {
+                "check": e.check,
+                "verdict": str(e.verdict.value),
+                "summary": e.summary,
+                "details": e.details,
+                "sandboxed": e.sandboxed,
+            }
+            for e in report.evidence
+        ],
+    }
