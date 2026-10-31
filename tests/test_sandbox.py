@@ -153,6 +153,21 @@ def test_output_truncated_at_20kb(tmp_path, monkeypatch):
     assert len(result.stdout.encode()) <= MAX_OUTPUT_BYTES
 
 
+def test_max_output_bytes_override_for_large_payloads(tmp_path, monkeypatch):
+    _force_weak(monkeypatch)
+    snippet = "print('B' * 30000)"
+    result = run_in_sandbox(
+        tmp_path, ["python", "-c", snippet], max_output_bytes=10_000
+    )
+    assert result.truncated is True
+    assert len(result.stdout.encode()) <= 10_000
+    big = run_in_sandbox(
+        tmp_path, ["python", "-c", snippet], max_output_bytes=100_000
+    )
+    assert big.truncated is False
+    assert len(big.stdout) == 30_000
+
+
 def test_hard_timeout_stops_run(tmp_path, monkeypatch):
     _force_weak(monkeypatch)
     started = time.monotonic()

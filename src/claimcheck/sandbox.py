@@ -98,9 +98,9 @@ def build_docker_command(
     ]
 
 
-def _truncate(raw: bytes) -> tuple[str, bool]:
-    if len(raw) > MAX_OUTPUT_BYTES:
-        return raw[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace"), True
+def _truncate(raw: bytes, limit: int = MAX_OUTPUT_BYTES) -> tuple[str, bool]:
+    if len(raw) > limit:
+        return raw[:limit].decode("utf-8", errors="replace"), True
     return raw.decode("utf-8", errors="replace"), False
 
 
@@ -129,6 +129,7 @@ def _run_docker(
     mem: str,
     cpus: str,
     image: str,
+    max_output_bytes: int,
 ) -> SandboxResult:
     name = f"claimcheck-{uuid.uuid4().hex[:12]}"
     argv = build_docker_command(
@@ -144,8 +145,8 @@ def _run_docker(
             )
 
     out, err, timed_out = _communicate(proc, timeout, on_timeout=_kill_container)
-    stdout, trunc_out = _truncate(out)
-    stderr, trunc_err = _truncate(err)
+    stdout, trunc_out = _truncate(out, max_output_bytes)
+    stderr, trunc_err = _truncate(err, max_output_bytes)
     return SandboxResult(
         stdout=stdout,
         stderr=stderr,
@@ -186,7 +187,9 @@ def _posix_limits(timeout: float):
     return _apply
 
 
-def _run_weak(root: Path, command: list[str], *, timeout: float) -> SandboxResult:
+def _run_weak(
+    root: Path, command: list[str], *, timeout: float, max_output_bytes: int
+) -> SandboxResult:
     tmp_dir = tempfile.mkdtemp(prefix="claimcheck-weak-")
     started = time.monotonic()
     try:
@@ -211,8 +214,10 @@ def _run_weak(root: Path, command: list[str], *, timeout: float) -> SandboxResul
                 command=list(command),
             )
         out, err, timed_out = _communicate(proc, timeout)
-        stdout, trunc_out = _truncate(out)
-        stderr, trunc_err = _truncate(err)
+        stdout, trunc_out = _truncate(out, max_output_bytes)
+        stderr, trunc_err = _truncate(err, max_output_bytes)
+        stdout = stdout.rstrip("\r\n")
+        stderr = stderr.rstrip("\r\n")
         return SandboxResult(
             stdout=stdout,
             stderr=stderr,
@@ -235,12 +240,18 @@ def run_in_sandbox(
     mem: str = DEFAULT_MEM,
     cpus: str = DEFAULT_CPUS,
     image: str = DEFAULT_IMAGE,
+    max_output_bytes: int = MAX_OUTPUT_BYTES,
 ) -> SandboxResult:
     """Run ``command`` on the repo — Docker when possible, restricted subprocess otherwise.
 
-    Untrusted report code must never run anywhere else.
+    Untrusted report code must never run anywhere else. Raise
+    ``max_output_bytes`` for machine-readable payloads such as coverage JSON.
     """
     root = Path(repo_path).resolve()
     if docker_available():
-        return _run_docker(root, command, timeout=timeout, mem=mem, cpus=cpus, image=image)
-    return _run_weak(root, command, timeout=timeout)
+        return _run_docker(
+            root, command,
+            timeout=timeout, mem=mem, cpus=cpus, image=image,
+            max_output_bytes=max_output_bytes,
+        )
+    return _run_weak(root, command, timeout=timeout, max_output_bytes=max_output_bytes)
