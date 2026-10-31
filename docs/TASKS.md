@@ -22,10 +22,10 @@ Rules: init commit (HACKATHON.md) goes straight to `main`. Everything after is b
 - [x] Tests with many phrasings
 
 ## PR 3: symbol and version checks  (`feat/symbols`)
-- [ ] `checks/symbols.py` AST finder with qualified names, methods, "did you mean"
-- [ ] `checks/version.py` git tags / metadata
-- [ ] `tests/fixtures/sample_project/` created
-- [ ] Tests: found, missing, typo, nested, syntax-error file skipped safely
+- [x] `checks/symbols.py` AST finder with qualified names, methods, "did you mean"
+- [x] `checks/version.py` git tags / metadata
+- [x] `tests/fixtures/sample_project/` created
+- [x] Tests: found, missing, typo, nested, syntax-error file skipped safely
 
 ## PR 4: sandbox and reproduction  (`feat/sandbox-repro`)
 - [ ] `sandbox/Dockerfile` (from `Plan/sandbox/Dockerfile`): python:3.11-slim + pytest + coverage, non-root user
