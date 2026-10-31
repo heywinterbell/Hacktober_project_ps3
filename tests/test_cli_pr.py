@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -134,6 +135,7 @@ def test_option_like_ref_is_rejected(monkeypatch, sample_project):
 def test_pr_help_lists_options():
     result = runner.invoke(app, ["pr", "--help"])
     assert result.exit_code == 0
+    clean = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", result.output)
     for opt in ("--repo", "--diff-file", "--base", "--head", "--report", "--no-llm", "--json"):
-        assert opt in result.output
+        assert opt in clean
 
