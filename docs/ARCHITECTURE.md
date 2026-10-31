@@ -58,6 +58,8 @@ Overall verdict: any REFUTED → refuted; else any WARNING → warning; else any
 4. "Adds tests" but no test files touched → WARNING. Suite fails → REFUTED.
 5. `Fixes #N` refers to a real issue → check via GitHub when a token is available.
 
+Limit: the sandbox image only ships pytest and pytest-cov, so a PR whose tests need the repo's own dependencies cannot run there. That is reported as INCONCLUSIVE ("could not run the test suite"), never as a pass. The suite is untrusted code: it can fake its own results, so a CONFIRMED coverage verdict is evidence, not proof.
+
 ## Sandbox specification
 
 | Control | Setting |
