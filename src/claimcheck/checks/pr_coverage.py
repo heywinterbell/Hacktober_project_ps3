@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from typing import Any
@@ -93,31 +94,29 @@ def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> dict[
     a few KB) passes through untruncated.
     """
     tmp_dir = tempfile.mkdtemp(prefix="prcov-")
-    cmd = [os.sys.executable, "-m", "pytest", "-q", "--cov="]
-    cov_report = "--cov-report=json:" + os.path.join(tmp_dir, _TMP_COVERAGE)
-    command = cmd + [cov_report]
-    # run inside the repo so coverage.json lands at repo root
-    result = subprocess.run(
-        command,
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        # suite did not pass; still may have coverage JSON, but we treat as failure
-        # caller can decide; return None to signal inconclusive
-        return None
-
-    cov_path = os.path.join(repo_path, _TMP_COVERAGE)
-    if not os.path.exists(cov_path):
-        return None
+    cov_path = os.path.join(tmp_dir, _TMP_COVERAGE)
+    command = [
+        os.sys.executable, "-m", "pytest", "-q",
+        "--cov=.",
+        "--cov-report=json:" + cov_path,
+    ]
     try:
+        result = subprocess.run(
+            command,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            # suite did not pass -> no usable coverage; signal inconclusive
+            return None
         with open(cov_path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data
+            return json.load(f)
     except Exception:
         return None
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def check_pr_coverage(
@@ -187,20 +186,6 @@ def check_pr_coverage(
                 "isolation": "weak",
             }
         ]
-
-        # claims_tests extra evidence
-        if claim is not None and claim.claims_tests:
-            test_files_changed = any(_is_test_path(fp) for fp, _ in prod)
-            if not test_files_changed:
-                evidence.append(
-                    {
-                        "check": "claims_tests",
-                        "verdict": "WARNING",
-                        "summary": '✗ claim says "adds tests" but diff touches no test files',
-                        "details": "",
-                        "isolation": "weak",
-                    }
-                )
     else:
         # all production added lines covered → CONFIRMED
         total_added = sum(len(add) for _, add in prod)
@@ -214,10 +199,20 @@ def check_pr_coverage(
             }
         ]
 
-        # claims_tests positive note (optional)
-        if claim is not None and claim.claims_tests:
-            test_files_changed = any(_is_test_path(fp) for fp, _ in prod)
-            # if tests present, we simply do not add extra WARNING evidence;
-            # the CONFIRMED verdict already covers it.
+    # claims_tests evidence — independent of the coverage outcome: the claim
+    # says "adds tests", so flag it when the diff touches no test files.
+    # (Must check the full diff, not *prod* — prod excludes test files.)
+    if claim is not None and claim.claims_tests:
+        test_files_changed = any(_is_test_path(fp) for fp in diff)
+        if not test_files_changed:
+            evidence.append(
+                {
+                    "check": "claims_tests",
+                    "verdict": "WARNING",
+                    "summary": '✗ claim says "adds tests" but diff touches no test files',
+                    "details": "",
+                    "isolation": "weak",
+                }
+            )
 
     return evidence
