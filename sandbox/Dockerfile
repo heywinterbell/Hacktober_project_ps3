@@ -15,7 +15,8 @@ FROM python:3.11-slim
 # No compilers, no package indexes at runtime.
 RUN pip install --no-cache-dir \
     "pytest>=8,<9" \
-    "coverage>=7,<8"
+    "coverage>=7,<8" \
+    "pytest-cov>=5,<7"
 
 # Non-root user; sandbox.py also passes --user, this is defense in depth.
 RUN useradd --create-home --uid 1000 sandbox

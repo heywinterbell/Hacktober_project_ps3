@@ -35,13 +35,13 @@ Rules: init commit (HACKATHON.md) goes straight to `main`. Everything after is b
 
 ## PR 5: PR coverage check  (`feat/pr-coverage`)
 - [ ] Unified-diff parser (hunks, renames, deletions, binary)
-- [ ] Coverage run in sandbox, JSON intersect changed lines
-- [ ] "adds tests" claim check, failing-suite detection
-- [ ] Tests with canned diffs and canned coverage JSON
+- [x] Coverage run in sandbox, JSON intersect changed lines
+- [x] "adds tests" claim check, failing-suite detection
+- [x] Tests with canned diffs and canned coverage JSON
 
 ## PR 6: report and CLI  (`feat/report-cli`)
 - [ ] `report.py` Markdown + JSON output
-- [ ] `claimcheck triage`, `claimcheck pr` wired to checks
+- [x] `claimcheck triage`, `claimcheck pr` wired to checks
 - [ ] End-to-end tests for the three slide cases (`--no-llm`)
 
 ## PR 7: webhook server  (`feat/server`)

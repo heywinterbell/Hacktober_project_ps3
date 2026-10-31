@@ -1,44 +1,51 @@
 """PR coverage check: intersect unified-diff changed lines with pytest coverage.
 
 Responsible for the ``! No test covers the change`` case (PR case).
+
+The target repo's test suite is untrusted code, so it only ever runs through
+:func:`claimcheck.sandbox.run_in_sandbox` (Docker when available).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
-import tempfile
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from claimcheck.diffparse import parse_unified_diff
 from claimcheck.models import Claim as ClaimModel
+from claimcheck.sandbox import STRONG, WEAK, run_in_sandbox
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_TMP_COVERAGE = "coverage.json"
+_MAX_COVERAGE_BYTES = 2 * 1024 * 1024  # coverage JSON must not be truncated
+_TAIL_CHARS = 800
 
 
 def _is_test_path(path: str) -> bool:
-    """Return True if *path* is under a typical test directory."""
-    norm = os.path.normpath(path)
-    parts = norm.replace("\\", "/").split("/")
-    tests_found = any(p in ("tests", "test") for p in parts)
-    ends_test_file = norm.endswith("_test.py") or norm.endswith("test.py")
-    return tests_found or ends_test_file
+    """Return True if *path* is a test file (test dir, ``test_*.py``, ``*_test.py``)."""
+    norm = os.path.normpath(path).replace("\\", "/")
+    parts = norm.split("/")
+    base = parts[-1]
+    in_test_dir = any(p in ("tests", "test") for p in parts[:-1])
+    test_name = base.startswith("test_") or base.endswith("_test.py") or base == "conftest.py"
+    return in_test_dir or test_name
 
 
 def _production_added_lines(diff: dict[str, set[int]]) -> list[tuple[str, set[int]]]:
     """Return ``(filepath, added_line_numbers)`` for *production* files only.
 
-    Excludes test files, binary files, and deleted files.
+    Excludes test files, non-Python files (docs, configs: coverage cannot measure
+    them), binary files, and deleted files.
     """
     result: list[tuple[str, set[int]]] = []
     for filepath, added in diff.items():
-        if not filepath:
+        if not filepath or not filepath.endswith(".py"):
             continue
         if _is_test_path(filepath):
             continue
@@ -67,56 +74,154 @@ def intersect_uncovered(diff: dict[str, set[int]], coverage: dict[str, Any]) -> 
     Lines are 1‑indexed.
     """
     uncovered: dict[str, set[int]] = {}
-    files_in_coverage = coverage.get("files", {})
+    files_in_coverage = {
+        _norm_path(path): data for path, data in coverage.get("files", {}).items()
+    }
     for filepath, added_lines in diff.items():
         if not added_lines:
             continue
-        executed_set: set[int] = set()
-        file_data = files_in_coverage.get(filepath)
-        if file_data is not None:
-            executed_set = set(file_data.get("executed_lines", []))
-        uncovered_lines = added_lines - executed_set
+        file_data = files_in_coverage.get(_norm_path(filepath))
+        if file_data is not None and "missing_lines" in file_data:
+            # Only executable lines count: comments, blanks and docstrings that
+            # a PR adds are neither executed nor missing, so they are ignored.
+            uncovered_lines = added_lines & set(file_data["missing_lines"])
+        else:
+            executed_set = set(file_data.get("executed_lines", [])) if file_data else set()
+            uncovered_lines = added_lines - executed_set
         if uncovered_lines:
             uncovered[filepath] = uncovered_lines
     return uncovered
+
+
+def _norm_path(path: str) -> str:
+    """Make coverage and diff paths comparable (``./x``, ``/workspace/x`` → ``x``)."""
+    norm = path.replace("\\", "/")
+    for prefix in ("/workspace/", "./"):
+        if norm.startswith(prefix):
+            norm = norm[len(prefix):]
+    return norm
 
 
 # ---------------------------------------------------------------------------
 # Core check
 # ---------------------------------------------------------------------------
 
-def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> dict[str, Any] | None:
-    """Run ``pytest -q --cov=. --cov-report=json`` and return the coverage JSON dict,
-    or ``None`` if it cannot be collected.
+@dataclass
+class CoverageRun:
+    """Outcome of running the suite with coverage inside the sandbox."""
 
-    The sandbox may be Docker (strong) or a restricted subprocess (weak).  In both
-    cases we use the ``max_output_bytes`` override so the coverage JSON (typically
-    a few KB) passes through untruncated.
+    coverage: dict[str, Any] | None
+    reason: str  # "ok" | "suite_failed" | "not_runnable" | "timeout" | "no_coverage"
+    isolation: str  # STRONG | WEAK
+    exit_code: int | None
+    output: str  # tail of pytest output, for the evidence details
+
+
+def build_coverage_command(token: str) -> tuple[list[str], str]:
+    """Return ``(argv, marker)`` for the sandboxed pytest-with-coverage run.
+
+    The repo mount is read-only, so the coverage data file, the JSON report and
+    bytecode all go to ``/tmp``. No environment is forwarded: the variables are
+    set in the shell line itself. ``marker`` separates pytest's own output from
+    the JSON; it carries a random token so test output cannot forge it.
     """
-    tmp_dir = tempfile.mkdtemp(prefix="prcov-")
-    cov_path = os.path.join(tmp_dir, _TMP_COVERAGE)
-    command = [
-        os.sys.executable, "-m", "pytest", "-q",
-        "--cov=.",
-        "--cov-report=json:" + cov_path,
-    ]
+    cov_json = f"/tmp/cc-{token}.json"
+    cov_data = f"/tmp/.cc-cov-{token}"
+    marker = f"@@CLAIMCHECK-COVERAGE-{token}@@"
+    script = (
+        f"COVERAGE_FILE={cov_data} python -B -m pytest -q -p no:cacheprovider "
+        f"--cov=. --cov-report=json:{cov_json}; rc=$?; "
+        f"printf '\\n%s\\n' {marker}; cat {cov_json} 2>/dev/null; "
+        f"rm -f {cov_json} {cov_data}; exit $rc"
+    )
+    return ["sh", "-c", script], marker
+
+
+def _split_output(stdout: str, marker: str) -> tuple[str, dict[str, Any] | None]:
+    """Split sandbox stdout into pytest text and the parsed coverage JSON."""
+    text, sep, blob = stdout.rpartition(marker)
+    if not sep:
+        return stdout, None
     try:
-        result = subprocess.run(
-            command,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+        data = json.loads(blob.strip())
+    except ValueError:
+        return text, None
+    return text, data if isinstance(data, dict) else None
+
+
+def _run_pytest_with_coverage(repo_path: str, *, timeout: float = 60.0) -> CoverageRun:
+    """Run the repo's suite with ``pytest-cov`` through ``run_in_sandbox``.
+
+    Never runs on the host directly. pytest exit codes: 0 pass, 1 tests failed,
+    5 no tests collected (coverage still usable); 2-4 mean the suite could not
+    run here (for example the sandbox image lacks the repo's dependencies).
+    """
+    argv, marker = build_coverage_command(uuid.uuid4().hex[:12])
+    result = run_in_sandbox(
+        Path(repo_path), argv, timeout=timeout, max_output_bytes=_MAX_COVERAGE_BYTES
+    )
+    isolation = result.isolation if result.isolation in (STRONG, WEAK) else WEAK
+    text, coverage = _split_output(result.stdout, marker)
+    tail = (text.strip() or result.stderr.strip())[-_TAIL_CHARS:]
+
+    def run(reason: str, cov: dict[str, Any] | None = None) -> CoverageRun:
+        return CoverageRun(cov, reason, isolation, result.exit_code, tail)
+
+    if result.timed_out:
+        return run("timeout")
+    if result.exit_code is None:
+        return run("not_runnable")
+    if result.exit_code == 1:
+        return run("suite_failed")
+    if result.exit_code not in (0, 5):
+        return run("not_runnable")
+    if coverage is None:
+        return run("no_coverage")
+    return run("ok", coverage)
+
+
+_REASON_TEXT = {
+    "timeout": "test run timed out in the sandbox",
+    "not_runnable": (
+        "could not run the test suite in the sandbox "
+        "(the image only has pytest and pytest-cov, not the repo's own dependencies)"
+    ),
+    "no_coverage": "tests ran but no coverage JSON was produced",
+}
+
+
+def _item(
+    verdict: str,
+    summary: str,
+    details: str = "",
+    isolation: str = "n/a",
+    check: str = "pr_coverage",
+) -> dict[str, Any]:
+    return {
+        "check": check,
+        "verdict": verdict,
+        "summary": summary,
+        "details": details,
+        "isolation": isolation,
+    }
+
+
+def _claims_tests_items(diff: dict[str, set[int]], claim: ClaimModel | None) -> list[dict]:
+    """The claim says "adds tests": flag it when the diff touches no test files.
+
+    Must look at the full diff, not the production lines (those exclude tests).
+    """
+    if claim is None or not claim.claims_tests:
+        return []
+    if any(_is_test_path(fp) for fp in diff):
+        return []
+    return [
+        _item(
+            "WARNING",
+            '✗ claim says "adds tests" but diff touches no test files',
+            check="claims_tests",
         )
-        if result.returncode != 0:
-            # suite did not pass -> no usable coverage; signal inconclusive
-            return None
-        with open(cov_path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    ]
 
 
 def check_pr_coverage(
@@ -126,93 +231,58 @@ def check_pr_coverage(
     claim: ClaimModel | None = None,
     timeout: float = 60.0,
 ) -> list[Any]:
-    """Analyse a PR diff against a test-suite run with coverage.
+    """Analyse a PR diff against a sandboxed test run with coverage.
 
-    Returns a list of evidence items that combine into a final verdict
-    (CONFIRMED / REFUTED / WARNING / INCONCLUSIVE).
+    Returns evidence dicts that combine into a final verdict:
 
-    The *claim* argument may be ``None``; if provided its ``claims_tests``
-    flag triggers extra evidence when the diff touches no test files.
+    * suite fails -> REFUTED
+    * added production lines not executed by any test -> WARNING
+    * all added production lines executed -> CONFIRMED
+    * suite cannot run / no production code / no coverage -> INCONCLUSIVE (with why)
+
+    *claim* may be ``None``; its ``claims_tests`` flag adds a WARNING when the
+    diff touches no test files.
     """
-    # 1️⃣ parse the diff
     diff = parse_unified_diff(diff_text)
-    prod = _production_added_lines(diff)  # List[(filepath, added_lines)]
+    prod = _production_added_lines(diff)
+    extra = _claims_tests_items(diff, claim)
 
-    # 2️⃣ run tests with coverage
-    coverage_data = _run_pytest_with_coverage(repo_path, timeout=timeout)
-
-    # 3️⃣ could not collect coverage → INCONCLUSIVE
-    if coverage_data is None:
-        return [
-            {
-                "check": "pr_coverage",
-                "verdict": "INCONCLUSIVE",
-                "summary": "✗ could not collect coverage JSON",
-                "details": "",
-                "isolation": "weak",
-            }
-        ]
-
-    # 4️⃣ intersect changed lines with coverage
-    uncovered = intersect_uncovered({fp: add for fp, add in prod}, coverage_data)
-
-    # 5️⃣ no production code added → INCONCLUSIVE
+    # Nothing to measure: do not run the suite at all.
     if not prod:
-        return [
-            {
-                "check": "pr_coverage",
-                "verdict": "INCONCLUSIVE",
-                "summary": "✗ no production code lines added in this PR",
-                "details": "",
-                "isolation": "weak",
-            }
-        ]
+        return [_item("INCONCLUSIVE", "✗ no production code lines added in this PR"), *extra]
 
-    # 6️⃣ some production lines uncovered → WARNING
+    run = _run_pytest_with_coverage(repo_path, timeout=timeout)
+    iso = run.isolation
+    marker = "" if iso == STRONG else " [weak isolation]"
+
+    if run.reason == "suite_failed":
+        return [_item("REFUTED", f"✗ test suite fails{marker}", run.output, iso), *extra]
+    if run.coverage is None:
+        why = _REASON_TEXT.get(run.reason, run.reason)
+        return [_item("INCONCLUSIVE", f"? {why}{marker}", run.output, iso), *extra]
+
+    uncovered = intersect_uncovered(dict(prod), run.coverage)
     if uncovered:
-        uncovered_lines: list[str] = []
-        for fp, lines in sorted(uncovered.items()):
-            clean = os.path.basename(fp)
-            line_str = ", ".join(str(i) for i in sorted(lines))
-            uncovered_lines.append(f"{clean}:{line_str}")
-        uncovered_detail = "; ".join(uncovered_lines)
-
+        parts = [
+            f"{fp}:{', '.join(str(i) for i in sorted(lines))}"
+            for fp, lines in sorted(uncovered.items())
+        ]
         evidence = [
-            {
-                "check": "pr_coverage",
-                "verdict": "WARNING",
-                "summary": "! No test covers the change",
-                "details": f"Uncovered production lines: {uncovered_detail}",
-                "isolation": "weak",
-            }
+            _item(
+                "WARNING",
+                f"! No test covers the change{marker}",
+                "Uncovered production lines: " + "; ".join(parts),
+                iso,
+            )
         ]
     else:
-        # all production added lines covered → CONFIRMED
-        total_added = sum(len(add) for _, add in prod)
+        total = sum(len(lines) for _, lines in prod)
         evidence = [
-            {
-                "check": "pr_coverage",
-                "verdict": "CONFIRMED",
-                "summary": f"✓ All {total_added} added production lines are covered by tests",
-                "details": "",
-                "isolation": "weak",
-            }
-        ]
-
-    # claims_tests evidence — independent of the coverage outcome: the claim
-    # says "adds tests", so flag it when the diff touches no test files.
-    # (Must check the full diff, not *prod* — prod excludes test files.)
-    if claim is not None and claim.claims_tests:
-        test_files_changed = any(_is_test_path(fp) for fp in diff)
-        if not test_files_changed:
-            evidence.append(
-                {
-                    "check": "claims_tests",
-                    "verdict": "WARNING",
-                    "summary": '✗ claim says "adds tests" but diff touches no test files',
-                    "details": "",
-                    "isolation": "weak",
-                }
+            _item(
+                "CONFIRMED",
+                f"✓ All {total} added production lines are covered by tests{marker}",
+                "",
+                iso,
             )
-
-    return evidence
+        ]
+    return evidence + extra
