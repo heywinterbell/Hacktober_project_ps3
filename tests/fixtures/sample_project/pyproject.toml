@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sample-fixture"
+version = "2.4.0"
+description = "Tiny fixture project for ClaimCheck tests"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+include = ["sample_fixture*"]

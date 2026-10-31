@@ -17,9 +17,9 @@ Rules: init commit (HACKATHON.md) goes straight to `main`. Everything after is b
 - [x] CI green
 
 ## PR 2: models and extraction  (`feat/extract`)
-- [ ] `models.py` dataclasses/enums
-- [ ] `extract.py`: classify, rule-based extraction (symbols, versions, issue refs, code blocks, "adds tests")
-- [ ] Tests with many phrasings
+- [x] `models.py` dataclasses/enums
+- [x] `extract.py`: classify, rule-based extraction (symbols, versions, issue refs, code blocks, "adds tests")
+- [x] Tests with many phrasings
 
 ## PR 3: symbol and version checks  (`feat/symbols`)
 - [ ] `checks/symbols.py` AST finder with qualified names, methods, "did you mean"
