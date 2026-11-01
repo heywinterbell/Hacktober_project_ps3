@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClaimCheck — Pitch Deck</title>
+<style>
+/* ── design plan ────────────────────────────────────────────────
+   Subject: ClaimCheck, a CLI triage tool that shows evidence.
+   Look: committed dark terminal (the tool's own GUI is a dark
+   terminal), GitHub-dark neutrals, verdict colors as the
+   semantic system. Display: Bricolage Grotesque; body:
+   IBM Plex Sans; data: IBM Plex Mono — one engineering family.
+   Layout: scroll deck, 6 sections, fixed top bar with slide dots.
+*/
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #010409;
+  --line: #30363d;
+  --fg: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --ok: #3fb950;
+  --fail: #f85149;
+  --warn: #d29922;
+  --display: "Bricolage Grotesque", "Avenir Next", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+  --mono: "IBM Plex Mono", "SF Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 16px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.deckbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 11;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px max(16px, env(safe-area-inset-left, 0px)) 12px max(16px, env(safe-area-inset-right, 0px));
+  background: rgba(13, 17, 23, 0.88);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.deckbar .brand { font: 600 13px var(--mono); letter-spacing: 0.04em; }
+.deckbar .brand b { color: var(--accent); }
+.deckbar .home {
+  margin-left: 8px; font: 500 12px var(--mono); color: var(--accent);
+  text-decoration: none;
+}
+.deckbar .home:hover { text-decoration: underline; }
+.dots { display: flex; gap: 8px; margin-left: auto; }
+.dots a {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--line); border: none;
+  transition: background 0.2s, transform 0.2s;
+}
+.dots a.active { background: var(--accent); transform: scale(1.25); }
+.dots a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slide {
+  min-height: 100vh;
+  padding-block: 96px 56px;
+  max-width: 1060px;
+  margin-inline: auto;
+}
+.eyebrow {
+  font: 500 12px var(--mono);
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.slide h1, .slide h2 {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.slide h2 { font-size: clamp(28px, 4.4vw, 44px); margin-bottom: 22px; }
+.lede { color: var(--muted); font-size: clamp(15px, 1.7vw, 18px); max-width: 62ch; }
+.slide > .inner { padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); }
+
+/* slide 1 */
+.cover { display: flex; flex-direction: column; justify-content: center; }
+.cover .name {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(52px, 9vw, 96px);
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+.cover .name span { color: var(--accent); }
+.cover .tagline {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: clamp(18px, 2.6vw, 26px);
+  color: var(--fg);
+  margin-top: 10px;
+}
+.cover p.lede { margin-top: 18px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+.chip {
+  font: 500 12px var(--mono);
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+}
+.chip a { color: var(--accent); text-decoration: none; }
+.chip a:hover { text-decoration: underline; }
+.team { margin-top: 30px; font: 400 14px var(--mono); color: var(--muted); }
+
+/* slide 2 — problem cards */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 28px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  min-width: 0;
+}
+.card h3 { font: 600 15px var(--body); margin-bottom: 8px; }
+.card .quote { font: 400 13px var(--mono); color: var(--accent); }
+.card p { font-size: 13.5px; color: var(--muted); margin-top: 10px; }
+.cost {
+  margin-top: 22px;
+  border-left: 3px solid var(--fail);
+  padding: 10px 16px;
+  background: rgba(248, 81, 73, 0.07);
+  font-size: 14.5px;
+  color: var(--fg);
+  max-width: 70ch;
+}
+
+/* slide 3 — approach */
+.two { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 28px; align-items: start; }
+.principle {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.principle strong { color: var(--fg); }
+table.ev {
+  width: 100%; border-collapse: collapse;
+  font-size: 13.5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+table.ev th {
+  font: 500 11px var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); text-align: left;
+  padding: 10px 14px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+table.ev td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.ev tr:last-child td { border-bottom: none; }
+table.ev td.mono { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.v-ok { color: var(--ok); } .v-fail { color: var(--fail); } .v-warn { color: var(--warn); }
+
+/* slide 4 — pipeline */
+.pipe { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; align-items: stretch; }
+.step {
+  flex: 1 1 170px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  min-width: 0;
+}
+.step .k { font: 500 11px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+.step h3 { font: 600 15px var(--body); margin: 6px 0 4px; }
+.step p { font-size: 12.5px; color: var(--muted); }
+.sandboxbox {
+  margin-top: 14px;
+  border: 1px dashed var(--warn);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font: 400 13px var(--mono);
+  color: var(--muted);
+}
+.sandboxbox b { color: var(--warn); font-weight: 600; }
+.surfaces { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+
+/* slide 5 — terminals */
+.term {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 14px;
+}
+.term .bar {
+  display: flex; gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.term pre {
+  font: 400 12.5px/1.75 var(--mono);
+  padding: 14px 16px;
+  overflow-x: auto;
+  color: var(--fg);
+  white-space: pre;
+}
+.term .cmd { color: var(--muted); }
+.note { margin-top: 12px; font-size: 13px; color: var(--muted); }
+
+/* slide 6 */
+.grids { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+.gridcard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  min-width: 0;
+}
+.gridcard h3 { font: 600 15px var(--body); margin-bottom: 10px; }
+.gridcard ul { list-style: none; }
+.gridcard li { font-size: 13.5px; color: var(--muted); padding: 4px 0; padding-left: 18px; position: relative; }
+.gridcard li::before { content: "›"; position: absolute; left: 2px; color: var(--accent); font-family: var(--mono); }
+.gridcard li b { color: var(--fg); font-weight: 600; }
+footer {
+  margin-top: 34px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font: 400 13px var(--mono);
+  color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 8px 22px;
+}
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .cards, .two, .grids { grid-template-columns: 1fr; }
+  .slide { min-height: 0; padding-block: 76px 34px; }
+  .cover { min-height: 88vh; }
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+</head>
+<body>
+
+<div class="deckbar" role="navigation" aria-label="Slides">
+  <span class="brand">CLAM<b>CH</b>ECK</span>
+  <a class="home" href="https://github.com/heywinterbell/Hacktober_project_ps3" target="_blank" rel="noreferrer">github</a>
+  <span class="dots" id="dots">
+    <a href="#cover" class="active" aria-label="Cover"></a>
+    <a href="#problem" aria-label="Problem"></a>
+    <a href="#approach" aria-label="Approach"></a>
+    <a href="#architecture" aria-label="Architecture"></a>
+    <a href="#evidence" aria-label="Live evidence"></a>
+    <a href="#safety" aria-label="Safety and scope"></a>
+  </span>
+</div>
+
+<section class="slide cover" id="cover">
+  <div class="inner">
+    <div class="eyebrow">Heywinterbell · Ankit Pal &amp; Dhruv</div>
+    <div class="name">Claim<span>Check</span></div>
+    <div class="tagline">Triage that tests the claims.</div>
+    <p class="lede">Maintainers get bug reports, security reports, and pull requests full of promises. ClaimCheck runs each claim through deterministic checks and a hardened sandbox, then posts the verdict with the evidence — not an opinion.</p>
+    <div class="chips">
+      <span class="chip">Python CLI + GUI</span>
+      <span class="chip">Docker sandbox</span>
+      <span class="chip">Local open-weight LLM (Ollama)</span>
+      <span class="chip">No cloud AI, no API keys</span>
+      <span class="chip"><a href="https://github.com/heywinterbell/Hacktober_project_ps3" target="_blank" rel="noreferrer">github.com/heywinterbell/Hacktober_project_ps3</a></span>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="problem">
+  <div class="inner">
+    <div class="eyebrow">The problem</div>
+    <h2>Maintainers drown in unverified claims</h2>
+    <p class="lede">Every project that takes input from the internet gets three kinds of it. Most cannot be checked by hand, and the ones that are wrong still burn hours.</p>
+    <div class="cards">
+      <div class="card">
+        <h3>Bug reports</h3>
+        <div class="quote">"Crash on long URLs"</div>
+        <p>No repro, wrong version, or already fixed. The maintainer has to re-derive it from scratch.</p>
+      </div>
+      <div class="card">
+        <h3>Security reports</h3>
+        <div class="quote">"RCE in parse_url_v2()"</div>
+        <p>The symbol may not exist at all — but the claim reads plausible and demands a response.</p>
+      </div>
+      <div class="card">
+        <h3>Pull requests</h3>
+        <div class="quote">"Fixes #120, adds tests"</div>
+        <p>"Adds tests" is a claim about coverage. Unchecked, it ships whatever the diff touched.</p>
+      </div>
+    </div>
+    <div class="cost">Triage cost is real: hours per false report, plus the risk of writing off a real one. Maintainers need <b>evidence</b>, not a second opinion.</div>
+  </div>
+</section>
+
+<section class="slide" id="approach">
+  <div class="inner">
+    <div class="eyebrow">The approach</div>
+    <h2>Test the claim, show the evidence</h2>
+    <div class="two">
+      <div>
+        <p class="lede">ClaimCheck classifies the input, extracts the testable claims (symbols, versions, repro steps, changed lines), and answers each with a check that actually runs: AST lookup, git tags, a sandboxed execution, or diff × test-coverage intersection. The output is a Markdown evidence block a maintainer can act on in ten seconds.</p>
+        <div class="principle" style="margin-top:20px">
+          <strong>The LLM never decides a verdict.</strong> Qwen2.5-Coder 7B (open-weight, local, via Ollama) only extracts claims and writes optional summaries. Every CONFIRMED / REFUTED / WARNING comes from deterministic code. The tool fully works with the model off.
+        </div>
+      </div>
+      <div style="min-width:0">
+        <table class="ev">
+          <thead><tr><th>Input</th><th>Verdict + evidence</th></tr></thead>
+          <tbody>
+            <tr><td>Bug report</td><td class="mono v-ok">✓ Reproduced on 2.4.1</td></tr>
+            <tr><td>Security report</td><td class="mono v-fail">✗ parse_url_v2() does not exist</td></tr>
+            <tr><td>Pull request</td><td class="mono v-warn">! No test covers the change</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="architecture">
+  <div class="inner">
+    <div class="eyebrow">Under the hood</div>
+    <h2>Five stages, one hardened boundary</h2>
+    <div class="pipe">
+      <div class="step"><div class="k">1 · Classify</div><h3>Type the input</h3><p>Bug, security report, or PR — routes to the right checks.</p></div>
+      <div class="step"><div class="k">2 · Extract</div><h3>Pull the claims</h3><p>Rule-based always; local LLM (qwen2.5-coder:7b) optional. Symbols, versions, repro snippets, changed lines.</p></div>
+      <div class="step"><div class="k">3 · Check</div><h3>Deterministic verdicts</h3><p>AST symbol lookup · git/package version · sandboxed repro · diff × pytest-coverage.</p></div>
+      <div class="step"><div class="k">4 · Execute</div><h3>Only in the sandbox</h3><p>Untrusted code runs in Docker: no network, read-only fs, all caps dropped, resource + time limits.</p></div>
+      <div class="step"><div class="k">5 · Report</div><h3>Evidence, not opinion</h3><p>Markdown report, or JSON for machines. Without Docker: restricted fallback, flagged <span class="v-warn">isolation: weak</span> on every line.</p></div>
+    </div>
+    <div class="sandboxbox"><b>hunt mode</b> — five hunter agents (SQLi · command injection · path traversal · XSS · RCE) generate payloads with the local LLM and execute them in the sandbox. Verdict from execution, never from the model.</div>
+    <div class="surfaces">
+      <span class="chip">claimcheck CLI — doctor / triage / pr / hunt</span>
+      <span class="chip">python main.py — terminal-styled GUI</span>
+      <span class="chip">GitHub App webhook — planned</span>
+      <span class="chip">178 tests, CI with no Docker / no LLM / no network</span>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="evidence">
+  <div class="inner">
+    <div class="eyebrow">Live evidence</div>
+    <h2>What the tool actually outputs</h2>
+    <p class="lede">Real output from running ClaimCheck against a sample Python package — not scripted examples. The tool reports both what it confirms and what it cannot run.</p>
+
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="cmd">$ claimcheck triage --repo ./urlsapp -r report.md --no-llm</span>
+## Bug check
+<span class="v-ok">**Verdict:** ✓ confirmed  Isolation: **strong**</span>
+<span class="v-ok">- ✓ **symbol_exists**: ✓ parse_url() exists (1 definition)</span>
+<span class="v-ok">- ✓ **reproduction**: ✓ Reproduced on current tree (crashed)</span>
+
+<span class="cmd">$ claimcheck triage --repo ./urlsapp -r report_v2.md --no-llm</span>
+## Bug check
+<span class="v-fail">**Verdict:** ✗ refuted  Isolation: no code was executed</span>
+<span class="v-fail">- ✗ **symbol_exists**: ✗ parse_url_v2() does not exist</span></pre>
+    </div>
+
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="cmd">$ claimcheck hunt "The function parse_url() has a SQL injection vulnerability in user input."</span>
+<span class="v-fail">sql_injection</span>      → SQL injection ruled out for 'parse_url'
+<span class="v-ok">command_injection</span> → Command injection test on 'parse_url': confirmed
+<span class="v-fail">path_traversal</span>    → Path traversal ruled out for 'parse_url'
+<span class="v-fail">xss</span>               → XSS ruled out for 'parse_url' (output safe)
+<span class="v-warn">rce</span>               → RCE test inconclusive for 'parse_url'</pre>
+    </div>
+
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="cmd">$ claimcheck pr --repo ./urlsapp --diff-file change.patch --no-llm</span>
+## Pr check
+<span class="v-warn">**Verdict:** ? inconclusive  Isolation: **strong**</span>
+<span class="v-warn">- ? **pr_coverage**: could not run the test suite in the sandbox</span>
+   <span class="v-warn">(the image only has pytest and pytest-cov, not the repo's own dependencies)</span></pre>
+    </div>
+    <p class="note">That last one is the design working: instead of guessing, the tool says exactly why it could not run the suite. No verdict without a reason.</p>
+  </div>
+</section>
+
+<section class="slide" id="safety">
+  <div class="inner">
+    <div class="eyebrow">Built safe</div>
+    <h2>Safety, scope, and what's next</h2>
+    <div class="grids">
+      <div class="gridcard">
+        <h3>Safety by construction</h3>
+        <ul>
+          <li>Untrusted report code runs <b>only</b> inside <b>sandbox.run_in_sandbox</b> — no secrets, no network, read-only filesystem, dropped capabilities, hard resource and time limits</li>
+          <li>Static checks (AST) <b>never</b> execute repo code</li>
+          <li>Webhook payloads verified with HMAC SHA-256</li>
+          <li>Weak-isolation fallback is <b>flagged on every report</b>, never silent</li>
+          <li>No cloud AI, no API keys — runs on a machine with nothing but Python</li>
+        </ul>
+      </div>
+      <div class="gridcard">
+        <h3>Honest limits</h3>
+        <ul>
+          <li>Python repositories only (AST + pytest/coverage)</li>
+          <li>Full isolation needs Docker; without it the tool says so</li>
+          <li>Failure-description matching is heuristic</li>
+          <li>Kernel-level container escapes are out of scope</li>
+          <li>Next: ship the GitHub App webhook (<b>serve</b>) so reports are triaged in the PR thread automatically</li>
+        </ul>
+      </div>
+    </div>
+    <footer>
+      <span><b style="color:var(--fg)">Stack:</b> Python 3.10+ · Typer · FastAPI · Ollama (qwen2.5-coder:7b) · Docker · 178 tests</span>
+      <span><a href="https://github.com/heywinterbell/Hacktober_project_ps3" target="_blank" rel="noreferrer">github.com/heywinterbell/Hacktober_project_ps3</a></span>
+      <span>MIT</span>
+    </footer>
+  </div>
+</section>
+
+<script>
+(function () {
+  var dots = Array.prototype.slice.call(document.querySelectorAll("#dots a"));
+  var slides = dots.map(function (d) { return document.querySelector(d.getAttribute("href")); });
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = slides.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle("active", j === i); });
+      }
+    });
+  }, { threshold: 0.5 });
+  slides.forEach(function (s) { if (s) obs.observe(s); });
+})();
+</script>
+</body>
+</html>
