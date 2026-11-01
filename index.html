@@ -359,37 +359,41 @@ footer a:hover { text-decoration: underline; }
 
     <div class="term">
       <div class="bar"><i></i><i></i><i></i></div>
-      <pre><span class="cmd">$ claimcheck triage --repo ./urlsapp -r report.md --no-llm</span>
+      <pre><span class="cmd">$ claimcheck doctor</span>
+Docker:   available
+Ollama:   available
+
+<span class="cmd">$ claimcheck triage --repo sample_project -r bug_report.md --no-llm</span>
 ## Bug check
 <span class="v-ok">**Verdict:** ✓ confirmed  Isolation: **strong**</span>
-<span class="v-ok">- ✓ **symbol_exists**: ✓ parse_url() exists (1 definition)</span>
-<span class="v-ok">- ✓ **reproduction**: ✓ Reproduced on current tree (crashed)</span>
+<span class="v-ok">- ✓ symbol_exists: parse_url() exists (1 definition)</span>
+<span class="v-ok">- ✓ version_exists: version 2.4.0 exists (tag 2.4.0)</span>
+<span class="v-ok">- ✓ reproduction: Reproduced on 2.4.0 (crashed)</span></pre>
+    </div>
 
-<span class="cmd">$ claimcheck triage --repo ./urlsapp -r report_v2.md --no-llm</span>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="cmd">$ claimcheck triage --repo sample_project -r sec_report.md --no-llm</span>
 ## Bug check
 <span class="v-fail">**Verdict:** ✗ refuted  Isolation: no code was executed</span>
-<span class="v-fail">- ✗ **symbol_exists**: ✗ parse_url_v2() does not exist</span></pre>
-    </div>
+<span class="v-fail">- ✗ symbol_exists: parse_url_v2() does not exist</span>
 
-    <div class="term">
-      <div class="bar"><i></i><i></i><i></i></div>
-      <pre><span class="cmd">$ claimcheck hunt "The function parse_url() has a SQL injection vulnerability in user input."</span>
+<span class="cmd">$ claimcheck hunt "parse_url() has a SQL injection vulnerability in user input"</span>
 <span class="v-fail">sql_injection</span>      → SQL injection ruled out for 'parse_url'
-<span class="v-ok">command_injection</span> → Command injection test on 'parse_url': confirmed
-<span class="v-fail">path_traversal</span>    → Path traversal ruled out for 'parse_url'
-<span class="v-fail">xss</span>               → XSS ruled out for 'parse_url' (output safe)
-<span class="v-warn">rce</span>               → RCE test inconclusive for 'parse_url'</pre>
+<span class="v-ok">command_injection</span>  → Command injection test on 'parse_url': confirmed
+<span class="v-fail">path_traversal</span>     → Path traversal ruled out for 'parse_url'
+<span class="v-warn">rce</span>              → RCE test inconclusive for 'parse_url'</pre>
     </div>
 
     <div class="term">
       <div class="bar"><i></i><i></i><i></i></div>
-      <pre><span class="cmd">$ claimcheck pr --repo ./urlsapp --diff-file change.patch --no-llm</span>
+      <pre><span class="cmd">$ claimcheck pr --repo sample_project --diff-file feature.diff --no-llm</span>
 ## Pr check
 <span class="v-warn">**Verdict:** ? inconclusive  Isolation: **strong**</span>
-<span class="v-warn">- ? **pr_coverage**: could not run the test suite in the sandbox</span>
+<span class="v-warn">- ? pr_coverage: could not run the test suite in the sandbox</span>
    <span class="v-warn">(the image only has pytest and pytest-cov, not the repo's own dependencies)</span></pre>
     </div>
-    <p class="note">That last one is the design working: instead of guessing, the tool says exactly why it could not run the suite. No verdict without a reason.</p>
+    <p class="note">All three blocks are captured verbatim from real runs against the project's own sample fixture — the SQLi claim gets refuted by execution while a command-injection finding surfaces, and the PR check fails loudly with a reason instead of guessing.</p>
   </div>
 </section>
 
