@@ -2,7 +2,7 @@
 
 **Triage that tests the claims.** Verify bug reports, security reports, and pull requests with deterministic checks and sandboxed execution — and show maintainers the evidence.
 
-> Built by **Heywinterbell** (Ankit Pal, Dhruv) at Hacktoberfest Hack Day — Problem 2.
+> Built by **Heywinterbell** (Dhruv) at Hacktoberfest Hack Day — Problem 2.
 
 ## What it does
 
