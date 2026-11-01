@@ -29,18 +29,15 @@ pip install -e ".[dev]"
 ## Usage
 
 ```bash
-claimcheck doctor                                  # check Docker / Ollama availability
-claimcheck triage --repo PATH --report FILE        # triage a bug or security report
-claimcheck pr --repo PATH --base main --head BR    # analyse a pull request (tests run in the sandbox)
-claimcheck pr --repo PATH --diff-file change.patch # same, from a unified diff file ('-' = stdin)
-claimcheck serve --port 8000                       # run the GitHub webhook server
-python main.py                                     # terminal-styled GUI (Tkinter)
-```
+ claimcheck doctor                                  # check Docker / Ollama availability
+ claimcheck triage --repo PATH --report FILE        # triage a bug or security report
+ claimcheck pr --repo PATH --base main --head BR    # analyse a pull request
+ claimcheck serve --port 8000                       # run the GitHub webhook server
+ python main.py                                     # terminal-styled GUI (Tkinter)
+ claimcheck hunt "The function parse_url_v2() has a SQL injection vulnerability in user input."  # run 5 AI security hunters
+ ```
 
 Add `--no-llm` to force rule-based extraction. Add `--json` for machine-readable output.
-`pr` also takes `--report FILE` (PR title/body, used to check an "adds tests" claim).
-Exit codes: 0 confirmed, 1 refuted, 2 warning or inconclusive, 3 usage error.
-`pr` needs the sandbox image rebuilt once: `docker build -t claimcheck-sandbox:latest sandbox/`.
 
 ## Safety
 
